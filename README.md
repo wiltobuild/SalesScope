@@ -1,12 +1,8 @@
-# SalesBrief
+# SalesScope
 
-SalesBrief is an early-stage web app that will help sales coordinators turn raw sales data into simple weekly reports.
+SalesScope lets sales coordinators upload weekly sales data and get a report.
 
-## Project files
-
-- `index.html` contains the page structure.
-- `style.css` provides the visual design and responsive layout.
-- `script.js` is reserved for future app behavior.
+Required columns: `Date`, `Order ID`, `Customer`, `Product`, `Quantity`, `Revenue`, `Cost`, and `Promotion`. `Promotion` may be blank.
 
 ## Run locally
 

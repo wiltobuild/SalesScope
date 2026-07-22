@@ -1,0 +1,41 @@
+Date,Order ID,Customer,Product,Quantity,Revenue,Cost,Promotion
+2026-01-05,ORD-1001,Northstar Retail,Wireless Headphones,3,239.97,132.00,New Year Sale
+2026-01-05,ORD-1002,Greenfield Market,Smart Watch,2,358.00,196.00,
+2026-01-05,ORD-1003,Harbor & Co,USB-C Dock,4,476.00,248.00,Bundle Deal
+2026-01-06,ORD-1004,Maple Street Stores,Portable Speaker,5,445.00,235.00,
+2026-01-06,ORD-1005,Northstar Retail,Laptop Stand,6,294.00,126.00,
+2026-01-06,ORD-1006,Greenfield Market,Wireless Headphones,4,319.96,176.00,New Year Sale
+2026-01-07,ORD-1007,Harbor & Co,Smart Watch,3,537.00,294.00,
+2026-01-07,ORD-1008,Maple Street Stores,USB-C Dock,2,238.00,124.00,Bundle Deal
+2026-01-07,ORD-1009,Northstar Retail,Portable Speaker,4,356.00,188.00,
+2026-01-08,ORD-1010,Greenfield Market,Laptop Stand,8,392.00,168.00,New Year Sale
+2026-01-08,ORD-1011,Harbor & Co,Wireless Headphones,5,399.95,220.00,
+2026-01-08,ORD-1012,Maple Street Stores,Smart Watch,2,358.00,196.00,
+2026-01-09,ORD-1013,Northstar Retail,USB-C Dock,5,595.00,310.00,Bundle Deal
+2026-01-09,ORD-1014,Greenfield Market,Portable Speaker,3,267.00,141.00,
+2026-01-09,ORD-1015,Harbor & Co,Laptop Stand,7,343.00,147.00,
+2026-01-10,ORD-1016,Maple Street Stores,Wireless Headphones,4,319.96,176.00,New Year Sale
+2026-01-10,ORD-1017,Northstar Retail,Smart Watch,4,716.00,392.00,
+2026-01-10,ORD-1018,Greenfield Market,USB-C Dock,3,357.00,186.00,
+2026-01-11,ORD-1019,Harbor & Co,Portable Speaker,6,534.00,282.00,
+2026-01-11,ORD-1020,Maple Street Stores,Laptop Stand,5,245.00,105.00,
+2026-01-12,ORD-1021,Northstar Retail,Wireless Headphones,2,159.98,88.00,
+2026-01-12,ORD-1022,Greenfield Market,Smart Watch,3,537.00,294.00,Winter Push
+2026-01-12,ORD-1023,Harbor & Co,USB-C Dock,4,476.00,248.00,Bundle Deal
+2026-01-13,ORD-1024,Maple Street Stores,Portable Speaker,4,356.00,188.00,
+2026-01-13,ORD-1025,Northstar Retail,Laptop Stand,7,343.00,147.00,
+2026-01-13,ORD-1026,Greenfield Market,Wireless Headphones,3,239.97,132.00,
+2026-01-14,ORD-1027,Harbor & Co,Smart Watch,2,358.00,196.00,Winter Push
+2026-01-14,ORD-1028,Maple Street Stores,USB-C Dock,3,357.00,186.00,
+2026-01-14,ORD-1029,Northstar Retail,Portable Speaker,3,267.00,141.00,
+2026-01-15,ORD-1030,Greenfield Market,Laptop Stand,6,294.00,126.00,
+2026-01-15,ORD-1031,Harbor & Co,Wireless Headphones,3,239.97,132.00,Winter Push
+2026-01-15,ORD-1032,Maple Street Stores,Smart Watch,4,716.00,392.00,
+2026-01-16,ORD-1033,Northstar Retail,USB-C Dock,2,238.00,124.00,
+2026-01-16,ORD-1034,Greenfield Market,Portable Speaker,5,445.00,235.00,Winter Push
+2026-01-16,ORD-1035,Harbor & Co,Laptop Stand,5,245.00,105.00,
+2026-01-17,ORD-1036,Maple Street Stores,Wireless Headphones,2,159.98,88.00,
+2026-01-17,ORD-1037,Northstar Retail,Smart Watch,3,537.00,294.00,Winter Push
+2026-01-18,ORD-1038,Greenfield Market,USB-C Dock,4,476.00,248.00,Bundle Deal
+2026-01-18,ORD-1039,Harbor & Co,Portable Speaker,4,356.00,188.00,
+2026-01-18,ORD-1040,Maple Street Stores,Laptop Stand,8,392.00,168.00,
