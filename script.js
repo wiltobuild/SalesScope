@@ -18,6 +18,16 @@ const expectedColumns = [
   "Cost",
   "Promotion",
 ];
+const headerSynonyms = {
+  Date: ["date", "order date", "order_date", "sale date", "transaction date"],
+  "Order ID": ["order id", "order_id", "orderid", "order #", "order number"],
+  Customer: ["customer", "customer name", "customer_name", "client", "client name"],
+  Product: ["product", "product name", "product_name", "item", "item name"],
+  Quantity: ["quantity", "qty", "units sold", "units_sold", "unit sold", "units"],
+  Revenue: ["revenue", "sales", "total revenue", "amount", "sales amount"],
+  Cost: ["cost", "total cost", "total_cost", "cogs"],
+  Promotion: ["promotion", "promo", "campaign"],
+};
 const requiredColumns = expectedColumns.slice(0, 7);
 
 let parsedSalesRows = [];
@@ -125,7 +135,7 @@ function normalizeHeaders(headers) {
   headers.forEach((header) => {
     const normalizedHeader = normalizeHeaderName(header);
     const expectedColumn = expectedColumns.find(
-      (column) => normalizeHeaderName(column) === normalizedHeader,
+      (column) => headerSynonyms[column].includes(normalizedHeader),
     );
 
     if (expectedColumn && !headerMap.has(expectedColumn)) {
