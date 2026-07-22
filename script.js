@@ -4,6 +4,7 @@ const salesFileInput = document.querySelector("#sales-file");
 const uploadError = document.querySelector("#upload-error");
 const selectedFileName = document.querySelector("#selected-file-name");
 const generateReportButton = document.querySelector("#generate-report-button");
+const downloadReportButton = document.querySelector("#download-report-button");
 const reportOutput = document.querySelector(".report-output");
 const expectedColumns = [
   "Date",
@@ -19,9 +20,11 @@ const requiredColumns = expectedColumns.slice(0, 7);
 
 let parsedSalesRows = [];
 let invalidSalesRows = [];
+let currentReport = null;
 
 salesFileInput.addEventListener("change", handleFileInputChange);
 generateReportButton.addEventListener("click", generateReport);
+downloadReportButton.addEventListener("click", downloadCurrentReport);
 
 function handleFileInputChange(event) {
   const [file] = event.target.files;
@@ -607,12 +610,114 @@ function renderReport(report) {
   ].join("");
 }
 
+function csvEscape(value) {
+  const stringValue = String(value ?? "");
+
+  return /[",\r\n]/.test(stringValue)
+    ? `"${stringValue.replaceAll('"', '""')}"`
+    : stringValue;
+}
+
+function buildReportCsv(report) {
+  const rows = [];
+  const addSection = (title, headerRow, dataRows) => {
+    rows.push([title]);
+
+    if (headerRow) {
+      rows.push(headerRow);
+    }
+
+    rows.push(...dataRows, []);
+  };
+
+  addSection("Summary", ["Metric", "Value"], [
+    ["Total Revenue", report.totals.totalRevenue],
+    ["Total Cost", report.totals.totalCost],
+    ["Total Profit", report.profit.totalProfit],
+    ["Profit Margin (%)", report.profit.profitMargin],
+    ["Total Orders", report.totals.totalOrders],
+    ["Total Units Sold", report.totals.totalUnitsSold],
+    ["Best-Selling Product", report.bestSelling?.product ?? ""],
+    ["Lowest-Selling Product", report.lowestSelling?.product ?? ""],
+  ]);
+
+  const { weekComparison } = report;
+  const weekRows = weekComparison.previousWeekKey
+    ? [
+        ["Revenue", weekComparison.currentWeekTotals.totalRevenue, weekComparison.previousWeekTotals.totalRevenue, weekComparison.percentChange.revenue],
+        ["Profit", weekComparison.currentWeekTotals.totalProfit, weekComparison.previousWeekTotals.totalProfit, weekComparison.percentChange.profit],
+        ["Orders", weekComparison.currentWeekTotals.totalOrders, weekComparison.previousWeekTotals.totalOrders, weekComparison.percentChange.orders],
+        ["Units Sold", weekComparison.currentWeekTotals.totalUnitsSold, weekComparison.previousWeekTotals.totalUnitsSold, weekComparison.percentChange.unitsSold],
+      ]
+    : [["No previous week data to compare yet."]];
+  addSection(
+    "Week-over-Week Comparison",
+    weekComparison.previousWeekKey ? ["Metric", "Current Week", "Previous Week", "% Change"] : null,
+    weekRows,
+  );
+
+  addSection(
+    "Product Performance",
+    ["Product", "Revenue", "Cost", "Profit", "Units Sold", "Orders"],
+    report.productPerformance.map((product) => [product.product, product.revenue, product.cost, product.profit, product.unitsSold, product.orderCount]),
+  );
+  addSection(
+    "Customer Performance",
+    ["Customer", "Revenue", "Units Sold", "Orders"],
+    report.customerPerformance.map((customer) => [customer.customer, customer.revenue, customer.unitsSold, customer.orderCount]),
+  );
+  addSection(
+    "Promotion Performance",
+    ["Promotion", "Revenue", "Units Sold", "Orders"],
+    report.promotionPerformance.map((promotion) => [promotion.promotion, promotion.revenue, promotion.unitsSold, promotion.orderCount]),
+  );
+  addSection(
+    "Alerts",
+    ["Severity", "Message"],
+    report.alerts.length
+      ? report.alerts.map((alert) => [alert.severity, alert.message])
+      : [["None", "No major issues detected."]],
+  );
+
+  return rows.map((row) => row.map(csvEscape).join(",")).join("\r\n");
+}
+
+function getReportFileName(report) {
+  const weekKey = report.weekComparison.currentWeekKey;
+
+  if (weekKey) {
+    return `salesscope-report-${weekKey}.csv`;
+  }
+
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  return `salesscope-report-${todayKey}.csv`;
+}
+
+function downloadCurrentReport() {
+  if (!currentReport) {
+    return;
+  }
+
+  const blob = new Blob([buildReportCsv(currentReport)], { type: "text/csv;charset=utf-8;" });
+  const objectUrl = URL.createObjectURL(blob);
+  const downloadLink = document.createElement("a");
+  downloadLink.href = objectUrl;
+  downloadLink.download = getReportFileName(currentReport);
+  document.body.append(downloadLink);
+  downloadLink.click();
+  downloadLink.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+}
+
 function generateReport() {
   reportOutput.textContent = "Generating report...";
 
   window.setTimeout(() => {
     const report = buildReport(parsedSalesRows);
+    currentReport = report;
     reportOutput.innerHTML = renderReport(report);
+    downloadReportButton.hidden = false;
     document.getElementById("report-heading-hint").textContent = "Here's your generated report.";
   }, 0);
 }

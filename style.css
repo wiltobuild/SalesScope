@@ -191,6 +191,26 @@ h1 {
   cursor: not-allowed;
 }
 
+#download-report-button {
+  margin-top: 1rem;
+  padding: 0.78rem 1.1rem;
+  border: 1px solid #34734a;
+  border-radius: 10px;
+  color: #285f3b;
+  background: #ffffff;
+  box-shadow: 0 5px 12px rgba(40, 95, 59, 0.08);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+#download-report-button:hover {
+  color: #ffffff;
+  background: #34734a;
+  transform: translateY(-1px);
+}
+
 .upload-area input {
   position: absolute;
   width: 1px;
