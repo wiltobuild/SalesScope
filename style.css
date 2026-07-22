@@ -149,6 +149,24 @@ h1 {
   font-size: 0.84rem;
 }
 
+.selected-file-name,
+.upload-error {
+  margin: 0.75rem 0 0;
+  font-size: 0.84rem;
+}
+
+.selected-file-name {
+  color: #6a766e;
+}
+
+.upload-error {
+  padding: 0.65rem 0.8rem;
+  border: 1px solid #e8c7c9;
+  border-radius: 10px;
+  color: #8b3f45;
+  background: #fdf2f2;
+}
+
 .upload-area input {
   position: absolute;
   width: 1px;
