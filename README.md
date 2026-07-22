@@ -1,7 +1,13 @@
-# SalesScope
+# SalesBrief
 
-SalesScope is a product workspace for building sales insights and workflows.
+SalesBrief is an early-stage web app that will help sales coordinators turn raw sales data into simple weekly reports.
 
-## Getting started
+## Project files
 
-This repository is ready for the first product increment.
+- `index.html` contains the page structure.
+- `style.css` provides the visual design and responsive layout.
+- `script.js` is reserved for future app behavior.
+
+## Run locally
+
+Open `index.html` in a web browser.
