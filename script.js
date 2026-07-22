@@ -307,3 +307,198 @@ function groupRowsByWeek(rows) {
 function getSortedWeekKeys(weekGroups) {
   return Array.from(weekGroups.keys()).sort();
 }
+
+function roundTo(value, decimalPlaces) {
+  const multiplier = 10 ** decimalPlaces;
+  return Math.round((value + Number.EPSILON) * multiplier) / multiplier;
+}
+
+function calculateTotals(rows) {
+  const totals = rows.reduce(
+    (result, row) => {
+      result.totalRevenue += row.revenue;
+      result.totalCost += row.cost;
+      result.totalUnitsSold += row.quantity;
+      result.orderIds.add(row.orderId);
+      return result;
+    },
+    { totalRevenue: 0, totalCost: 0, totalUnitsSold: 0, orderIds: new Set() },
+  );
+
+  return {
+    totalRevenue: roundTo(totals.totalRevenue, 2),
+    totalCost: roundTo(totals.totalCost, 2),
+    totalOrders: totals.orderIds.size,
+    totalUnitsSold: totals.totalUnitsSold,
+  };
+}
+
+function calculateProfit(totalRevenue, totalCost) {
+  const totalProfit = roundTo(totalRevenue - totalCost, 2);
+
+  return {
+    totalProfit,
+    profitMargin: totalRevenue === 0 ? 0 : roundTo((totalProfit / totalRevenue) * 100, 1),
+  };
+}
+
+function calculateProductPerformance(rows) {
+  return Array.from(groupRowsByProduct(rows), ([product, productRows]) => {
+    const totals = calculateTotals(productRows);
+    const { totalProfit } = calculateProfit(totals.totalRevenue, totals.totalCost);
+
+    return {
+      product,
+      revenue: totals.totalRevenue,
+      cost: totals.totalCost,
+      profit: totalProfit,
+      unitsSold: totals.totalUnitsSold,
+      orderCount: totals.totalOrders,
+    };
+  }).sort((first, second) => second.revenue - first.revenue);
+}
+
+function calculateCustomerPerformance(rows) {
+  return Array.from(groupRowsByCustomer(rows), ([customer, customerRows]) => {
+    const totals = calculateTotals(customerRows);
+
+    return {
+      customer,
+      revenue: totals.totalRevenue,
+      unitsSold: totals.totalUnitsSold,
+      orderCount: totals.totalOrders,
+    };
+  }).sort((first, second) => second.revenue - first.revenue);
+}
+
+function calculatePromotionPerformance(rows) {
+  return Array.from(groupRowsByPromotion(rows), ([promotion, promotionRows]) => {
+    const totals = calculateTotals(promotionRows);
+
+    return {
+      promotion,
+      revenue: totals.totalRevenue,
+      unitsSold: totals.totalUnitsSold,
+      orderCount: totals.totalOrders,
+    };
+  }).sort((first, second) => second.revenue - first.revenue);
+}
+
+function calculateBestAndLowestSellingProducts(productPerformance) {
+  if (!productPerformance.length) {
+    return { bestSelling: null, lowestSelling: null };
+  }
+
+  const productsByUnitsSold = [...productPerformance].sort(
+    (first, second) => second.unitsSold - first.unitsSold,
+  );
+
+  return {
+    bestSelling: productsByUnitsSold[0],
+    lowestSelling: productsByUnitsSold[productsByUnitsSold.length - 1],
+  };
+}
+
+function calculateWeekComparison(rows) {
+  const weekGroups = groupRowsByWeek(rows);
+  const weekKeys = getSortedWeekKeys(weekGroups);
+  const currentWeekKey = weekKeys.at(-1) || null;
+  const previousWeekKey = weekKeys.at(-2) || null;
+  const calculateWeekTotals = (weekRows) => {
+    const totals = calculateTotals(weekRows);
+    const { totalProfit } = calculateProfit(totals.totalRevenue, totals.totalCost);
+
+    return { ...totals, totalProfit };
+  };
+  const currentWeekTotals = currentWeekKey
+    ? calculateWeekTotals(weekGroups.get(currentWeekKey))
+    : calculateWeekTotals([]);
+  const previousWeekTotals = previousWeekKey
+    ? calculateWeekTotals(weekGroups.get(previousWeekKey))
+    : null;
+  const percentChangeFor = (currentValue, previousValue) => {
+    // A zero baseline has no meaningful percentage change.
+    if (previousValue === 0) {
+      return null;
+    }
+
+    return roundTo(((currentValue - previousValue) / previousValue) * 100, 1);
+  };
+
+  return {
+    currentWeekKey,
+    previousWeekKey,
+    currentWeekTotals,
+    previousWeekTotals,
+    percentChange: previousWeekTotals
+      ? {
+          revenue: percentChangeFor(
+            currentWeekTotals.totalRevenue,
+            previousWeekTotals.totalRevenue,
+          ),
+          profit: percentChangeFor(
+            currentWeekTotals.totalProfit,
+            previousWeekTotals.totalProfit,
+          ),
+          orders: percentChangeFor(
+            currentWeekTotals.totalOrders,
+            previousWeekTotals.totalOrders,
+          ),
+          unitsSold: percentChangeFor(
+            currentWeekTotals.totalUnitsSold,
+            previousWeekTotals.totalUnitsSold,
+          ),
+        }
+      : { revenue: null, profit: null, orders: null, unitsSold: null },
+  };
+}
+
+function calculateAlerts(report) {
+  const alerts = [];
+  const revenueChange = report.weekComparison.percentChange.revenue;
+
+  if (revenueChange !== null && revenueChange <= -20) {
+    alerts.push({
+      severity: "warning",
+      message: `Revenue declined ${Math.abs(revenueChange).toFixed(1)}% from the previous week.`,
+    });
+  }
+
+  if (report.profit.profitMargin < 10) {
+    alerts.push({
+      severity: "warning",
+      message: `Profit margin is ${report.profit.profitMargin.toFixed(1)}%.`,
+    });
+  }
+
+  if (invalidSalesRows.length > 0) {
+    alerts.push({
+      severity: "info",
+      message: `${invalidSalesRows.length} row${invalidSalesRows.length === 1 ? " was" : "s were"} skipped due to invalid data.`,
+    });
+  }
+
+  return alerts;
+}
+
+function buildReport(rows) {
+  const totals = calculateTotals(rows);
+  const profit = calculateProfit(totals.totalRevenue, totals.totalCost);
+  const productPerformance = calculateProductPerformance(rows);
+  const customerPerformance = calculateCustomerPerformance(rows);
+  const promotionPerformance = calculatePromotionPerformance(rows);
+  const { bestSelling, lowestSelling } = calculateBestAndLowestSellingProducts(productPerformance);
+  const weekComparison = calculateWeekComparison(rows);
+  const report = {
+    totals,
+    profit,
+    productPerformance,
+    customerPerformance,
+    promotionPerformance,
+    bestSelling,
+    lowestSelling,
+    weekComparison,
+  };
+
+  return { ...report, alerts: calculateAlerts(report) };
+}
