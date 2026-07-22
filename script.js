@@ -233,3 +233,77 @@ async function parseAndValidateFile(file) {
     showUploadError(`Unable to read this file: ${error.message}`);
   }
 }
+
+const NO_PROMOTION_LABEL = "No promotion";
+
+function getWeekStart(date) {
+  const weekStart = new Date(date);
+  const daysSinceMonday = (weekStart.getDay() + 6) % 7;
+
+  weekStart.setDate(weekStart.getDate() - daysSinceMonday);
+  weekStart.setHours(0, 0, 0, 0);
+  return weekStart;
+}
+
+function getWeekKey(date) {
+  const weekStart = getWeekStart(date);
+  const year = weekStart.getFullYear();
+  const month = String(weekStart.getMonth() + 1).padStart(2, "0");
+  const day = String(weekStart.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function groupRowsByProduct(rows) {
+  const productGroups = new Map();
+
+  rows.forEach((row) => {
+    const group = productGroups.get(row.product) || [];
+    group.push(row);
+    productGroups.set(row.product, group);
+  });
+
+  return productGroups;
+}
+
+function groupRowsByCustomer(rows) {
+  const customerGroups = new Map();
+
+  rows.forEach((row) => {
+    const group = customerGroups.get(row.customer) || [];
+    group.push(row);
+    customerGroups.set(row.customer, group);
+  });
+
+  return customerGroups;
+}
+
+function groupRowsByPromotion(rows) {
+  const promotionGroups = new Map();
+
+  rows.forEach((row) => {
+    const promotionKey = row.promotion === null ? NO_PROMOTION_LABEL : row.promotion;
+    const group = promotionGroups.get(promotionKey) || [];
+    group.push(row);
+    promotionGroups.set(promotionKey, group);
+  });
+
+  return promotionGroups;
+}
+
+function groupRowsByWeek(rows) {
+  const weekGroups = new Map();
+
+  rows.forEach((row) => {
+    const weekKey = getWeekKey(row.date);
+    const group = weekGroups.get(weekKey) || [];
+    group.push(row);
+    weekGroups.set(weekKey, group);
+  });
+
+  return weekGroups;
+}
+
+function getSortedWeekKeys(weekGroups) {
+  return Array.from(weekGroups.keys()).sort();
+}
