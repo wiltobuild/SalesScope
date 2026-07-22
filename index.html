@@ -43,6 +43,7 @@
         </label>
         <p id="selected-file-name" class="selected-file-name" aria-live="polite"></p>
         <p id="upload-error" class="upload-error" role="alert" hidden></p>
+        <button type="button" id="generate-report-button" disabled>Generate Report</button>
       </section>
 
       <section class="panel report-panel" aria-labelledby="report-heading">
@@ -50,7 +51,7 @@
           <span class="step-number" aria-hidden="true">2</span>
           <div>
             <h2 id="report-heading">Weekly sales report</h2>
-            <p>Your generated report will appear here later.</p>
+            <p id="report-heading-hint">Your generated report will appear here later.</p>
           </div>
         </div>
         <div class="report-output" aria-live="polite"></div>

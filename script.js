@@ -3,6 +3,8 @@
 const salesFileInput = document.querySelector("#sales-file");
 const uploadError = document.querySelector("#upload-error");
 const selectedFileName = document.querySelector("#selected-file-name");
+const generateReportButton = document.querySelector("#generate-report-button");
+const reportOutput = document.querySelector(".report-output");
 const expectedColumns = [
   "Date",
   "Order ID",
@@ -19,6 +21,7 @@ let parsedSalesRows = [];
 let invalidSalesRows = [];
 
 salesFileInput.addEventListener("change", handleFileInputChange);
+generateReportButton.addEventListener("click", generateReport);
 
 function handleFileInputChange(event) {
   const [file] = event.target.files;
@@ -31,6 +34,8 @@ function handleFileInputChange(event) {
 }
 
 async function handleFileSelection(file) {
+  setGenerateButtonEnabled(false);
+
   if (!isSupportedFileType(file)) {
     clearSelectedFile();
     showUploadError("Please choose a CSV, XLS, or XLSX file.");
@@ -70,6 +75,10 @@ function showSelectedFile(file) {
 
 function clearSelectedFile() {
   selectedFileName.textContent = "";
+}
+
+function setGenerateButtonEnabled(isEnabled) {
+  generateReportButton.disabled = !isEnabled;
 }
 
 async function readFileAsRows(file) {
@@ -192,6 +201,7 @@ function coerceRow(rawRow, headerMap) {
 async function parseAndValidateFile(file) {
   parsedSalesRows = [];
   invalidSalesRows = [];
+  setGenerateButtonEnabled(false);
 
   try {
     const { rawRows, headers } = await readFileAsRows(file);
@@ -220,6 +230,8 @@ async function parseAndValidateFile(file) {
       showUploadError("No valid sales rows were found in this file.");
       return;
     }
+
+    setGenerateButtonEnabled(true);
 
     if (invalidSalesRows.length) {
       showUploadError(
@@ -501,4 +513,106 @@ function buildReport(rows) {
   };
 
   return { ...report, alerts: calculateAlerts(report) };
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function formatMoney(value) {
+  return `$${Number(value).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function formatPercent(value) {
+  return `${Number(value).toFixed(1)}%`;
+}
+
+function renderSummaryCards(report) {
+  const cards = [
+    ["Total Revenue", formatMoney(report.totals.totalRevenue)],
+    ["Total Cost", formatMoney(report.totals.totalCost)],
+    ["Total Profit", formatMoney(report.profit.totalProfit), `${formatPercent(report.profit.profitMargin)} margin`],
+    ["Total Orders", report.totals.totalOrders.toLocaleString()],
+    ["Total Units Sold", report.totals.totalUnitsSold.toLocaleString()],
+    ["Best-Selling Product", report.bestSelling ? report.bestSelling.product : "—", report.bestSelling ? `${report.bestSelling.unitsSold.toLocaleString()} units sold` : ""],
+    ["Lowest-Selling Product", report.lowestSelling ? report.lowestSelling.product : "—", report.lowestSelling ? `${report.lowestSelling.unitsSold.toLocaleString()} units sold` : ""],
+  ];
+
+  return `<section class="report-section"><h3>Summary</h3><div class="summary-grid">${cards.map(([label, value, detail]) => `<article class="summary-card"><span class="summary-card-label">${escapeHtml(label)}</span><strong class="summary-card-value">${escapeHtml(value)}</strong>${detail ? `<span class="summary-card-detail">${escapeHtml(detail)}</span>` : ""}</article>`).join("")}</div></section>`;
+}
+
+function renderWeekComparison(weekComparison) {
+  if (!weekComparison.previousWeekKey) {
+    return `<section class="report-section"><h3>Week-over-week comparison</h3><p class="report-empty-state">No previous week data to compare yet.</p></section>`;
+  }
+
+  const metrics = [
+    ["Revenue", "totalRevenue", "revenue", formatMoney],
+    ["Profit", "totalProfit", "profit", formatMoney],
+    ["Orders", "totalOrders", "orders", (value) => value.toLocaleString()],
+    ["Units sold", "totalUnitsSold", "unitsSold", (value) => value.toLocaleString()],
+  ];
+  const cards = metrics.map(([label, totalKey, changeKey, formatter]) => {
+    const change = weekComparison.percentChange[changeKey];
+    const changeClass = change === null || change === 0 ? "change-neutral" : change > 0 ? "change-positive" : "change-negative";
+    const changeText = change === null ? "No percentage baseline" : `${change > 0 ? "+" : ""}${formatPercent(change)}`;
+    return `<article class="comparison-card"><span class="comparison-label">${label}</span><p class="comparison-values">Current: ${formatter(weekComparison.currentWeekTotals[totalKey])}<br>Previous: ${formatter(weekComparison.previousWeekTotals[totalKey])}</p><span class="${changeClass}">${changeText}</span></article>`;
+  }).join("");
+
+  return `<section class="report-section"><h3>Week-over-week comparison</h3><p class="summary-card-detail">${escapeHtml(weekComparison.currentWeekKey)} compared with ${escapeHtml(weekComparison.previousWeekKey)}</p><div class="comparison-grid">${cards}</div></section>`;
+}
+
+function renderTable(headers, rows) {
+  return `<div class="table-wrap"><table class="report-table"><thead><tr>${headers.map((header) => `<th scope="col">${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function renderProductTable(productPerformance) {
+  const rows = productPerformance.map((product) => `<tr><td>${escapeHtml(product.product)}</td><td>${formatMoney(product.revenue)}</td><td>${formatMoney(product.cost)}</td><td>${formatMoney(product.profit)}</td><td>${product.unitsSold.toLocaleString()}</td><td>${product.orderCount.toLocaleString()}</td></tr>`).join("");
+  return `<section class="report-section"><h3>Product performance</h3>${renderTable(["Product", "Revenue", "Cost", "Profit", "Units Sold", "Orders"], rows)}</section>`;
+}
+
+function renderCustomerTable(customerPerformance) {
+  const rows = customerPerformance.map((customer) => `<tr><td>${escapeHtml(customer.customer)}</td><td>${formatMoney(customer.revenue)}</td><td>${customer.unitsSold.toLocaleString()}</td><td>${customer.orderCount.toLocaleString()}</td></tr>`).join("");
+  return `<section class="report-section"><h3>Customer performance</h3>${renderTable(["Customer", "Revenue", "Units Sold", "Orders"], rows)}</section>`;
+}
+
+function renderPromotionSection(promotionPerformance) {
+  const rows = promotionPerformance.map((promotion) => `<tr><td>${escapeHtml(promotion.promotion)}</td><td>${formatMoney(promotion.revenue)}</td><td>${promotion.unitsSold.toLocaleString()}</td><td>${promotion.orderCount.toLocaleString()}</td></tr>`).join("");
+  return `<section class="report-section"><h3>Promotion performance</h3>${renderTable(["Promotion", "Revenue", "Units Sold", "Orders"], rows)}</section>`;
+}
+
+function renderAlerts(alerts) {
+  const content = alerts.length
+    ? `<ul class="alert-list">${alerts.map((alert) => `<li class="alert-item alert-${escapeHtml(alert.severity)}">${escapeHtml(alert.message)}</li>`).join("")}</ul>`
+    : '<p class="report-empty-state">No major issues detected.</p>';
+  return `<section class="report-section"><h3>Alerts</h3>${content}</section>`;
+}
+
+function renderReport(report) {
+  return [
+    renderAlerts(report.alerts),
+    renderSummaryCards(report),
+    renderWeekComparison(report.weekComparison),
+    renderProductTable(report.productPerformance),
+    renderCustomerTable(report.customerPerformance),
+    renderPromotionSection(report.promotionPerformance),
+  ].join("");
+}
+
+function generateReport() {
+  reportOutput.textContent = "Generating report...";
+
+  window.setTimeout(() => {
+    const report = buildReport(parsedSalesRows);
+    reportOutput.innerHTML = renderReport(report);
+    document.getElementById("report-heading-hint").textContent = "Here's your generated report.";
+  }, 0);
 }
