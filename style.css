@@ -191,6 +191,26 @@ h1 {
   cursor: not-allowed;
 }
 
+#reset-button {
+  margin: 1rem 0 0 0.5rem;
+  padding: 0.5rem;
+  border: 0;
+  border-radius: 6px;
+  color: #6a766e;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 650;
+  transition: color 160ms ease, background 160ms ease;
+}
+
+#reset-button:hover {
+  color: #285f3b;
+  background: #eef5ef;
+  text-decoration: underline;
+}
+
 #download-report-button {
   margin-top: 1rem;
   padding: 0.78rem 1.1rem;
@@ -316,5 +336,9 @@ h1 {
   .upload-area {
     min-height: 165px;
     padding: 1.4rem;
+  }
+
+  #reset-button {
+    margin-left: 0.25rem;
   }
 }

@@ -6,6 +6,8 @@ const selectedFileName = document.querySelector("#selected-file-name");
 const generateReportButton = document.querySelector("#generate-report-button");
 const downloadReportButton = document.querySelector("#download-report-button");
 const reportOutput = document.querySelector(".report-output");
+const reportHeadingHint = document.querySelector("#report-heading-hint");
+const initialReportHeadingHint = reportHeadingHint.textContent;
 const expectedColumns = [
   "Date",
   "Order ID",
@@ -25,6 +27,20 @@ let currentReport = null;
 salesFileInput.addEventListener("change", handleFileInputChange);
 generateReportButton.addEventListener("click", generateReport);
 downloadReportButton.addEventListener("click", downloadCurrentReport);
+document.querySelector("#reset-button").addEventListener("click", resetApp);
+
+function resetApp() {
+  salesFileInput.value = "";
+  parsedSalesRows = [];
+  invalidSalesRows = [];
+  currentReport = null;
+  clearSelectedFile();
+  clearUploadError();
+  setGenerateButtonEnabled(false);
+  reportOutput.innerHTML = "";
+  downloadReportButton.hidden = true;
+  reportHeadingHint.textContent = initialReportHeadingHint;
+}
 
 function handleFileInputChange(event) {
   const [file] = event.target.files;
@@ -718,6 +734,6 @@ function generateReport() {
     currentReport = report;
     reportOutput.innerHTML = renderReport(report);
     downloadReportButton.hidden = false;
-    document.getElementById("report-heading-hint").textContent = "Here's your generated report.";
+    reportHeadingHint.textContent = "Here's your generated report.";
   }, 0);
 }
