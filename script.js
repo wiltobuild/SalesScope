@@ -5,8 +5,14 @@ const uploadError = document.querySelector("#upload-error");
 const selectedFileName = document.querySelector("#selected-file-name");
 const generateReportButton = document.querySelector("#generate-report-button");
 const downloadReportButton = document.querySelector("#download-report-button");
+const loadSuperstoreButton = document.querySelector("#load-superstore-button");
+const fetchSuperstoreButton = document.querySelector("#fetch-superstore-button");
+const apiStatus = document.querySelector("#api-status");
 const reportOutput = document.querySelector(".report-output");
 const reportHeadingHint = document.querySelector("#report-heading-hint");
+const reportControls = document.querySelector("#report-controls");
+const granularitySelect = document.querySelector("#granularity-select");
+const periodSelect = document.querySelector("#period-select");
 const initialReportHeadingHint = reportHeadingHint.textContent;
 const expectedColumns = [
   "Date",
@@ -18,6 +24,18 @@ const expectedColumns = [
   "Cost",
   "Promotion",
 ];
+// Cost is absent because it can be satisfied by either a Cost or a Profit column.
+const requiredColumns = [
+  "Date",
+  "Order ID",
+  "Customer",
+  "Product",
+  "Quantity",
+  "Revenue",
+];
+// Profit and Discount are alternative inputs, not report fields: Profit stands in for a
+// missing Cost, and Discount stands in for a missing Promotion.
+const optionalSourceColumns = ["Profit", "Discount"];
 const headerSynonyms = {
   Date: ["date", "order date", "order_date", "sale date", "transaction date"],
   "Order ID": ["order id", "order_id", "orderid", "order #", "order number"],
@@ -27,28 +45,54 @@ const headerSynonyms = {
   Revenue: ["revenue", "sales", "total revenue", "amount", "sales amount"],
   Cost: ["cost", "total cost", "total_cost", "cogs"],
   Promotion: ["promotion", "promo", "campaign"],
+  Profit: ["profit", "total profit", "margin", "gross profit"],
+  Discount: ["discount"],
 };
-const requiredColumns = expectedColumns.slice(0, 7);
+const NO_PROMOTION_LABEL = "No promotion";
+const TOP_ROW_COUNT = 10;
+// Kaggle serves this dataset with Access-Control-Allow-Origin: *, so the browser can
+// call it directly - no backend, no proxy, and no API key.
+const KAGGLE_DATASET_URL =
+  "https://www.kaggle.com/api/v1/datasets/download/vivek468/superstore-dataset-final";
+const LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
+const ZIP64_SENTINEL = 0xffffffff;
 
 let parsedSalesRows = [];
 let invalidSalesRows = [];
 let currentReport = null;
+let selectedGranularity = "month";
+let selectedPeriodKey = null;
+const expandedSections = new Set();
 
 salesFileInput.addEventListener("change", handleFileInputChange);
+loadSuperstoreButton.addEventListener("click", loadSuperstoreData);
+fetchSuperstoreButton.addEventListener("click", fetchSuperstoreFromApi);
 generateReportButton.addEventListener("click", generateReport);
 downloadReportButton.addEventListener("click", downloadCurrentReport);
 document.querySelector("#reset-button").addEventListener("click", resetApp);
+granularitySelect.addEventListener("change", handleGranularityChange);
+periodSelect.addEventListener("change", handlePeriodChange);
+// The report HTML is replaced wholesale on every render, so per-button listeners would
+// not survive. One delegated listener on the container does.
+reportOutput.addEventListener("click", handleReportOutputClick);
 
 function resetApp() {
   salesFileInput.value = "";
   parsedSalesRows = [];
   invalidSalesRows = [];
   currentReport = null;
+  selectedGranularity = "month";
+  selectedPeriodKey = null;
+  expandedSections.clear();
   clearSelectedFile();
   clearUploadError();
+  setApiStatus("");
   setGenerateButtonEnabled(false);
   reportOutput.innerHTML = "";
   downloadReportButton.hidden = true;
+  reportControls.hidden = true;
+  granularitySelect.value = "month";
+  periodSelect.innerHTML = "";
   reportHeadingHint.textContent = initialReportHeadingHint;
 }
 
@@ -78,7 +122,6 @@ async function handleFileSelection(file) {
   }
 
   clearUploadError();
-  showSelectedFile(file);
   await parseAndValidateFile(file);
 }
 
@@ -98,10 +141,6 @@ function clearUploadError() {
   uploadError.hidden = true;
 }
 
-function showSelectedFile(file) {
-  selectedFileName.textContent = `Selected file: ${file.name}`;
-}
-
 function clearSelectedFile() {
   selectedFileName.textContent = "";
 }
@@ -110,8 +149,7 @@ function setGenerateButtonEnabled(isEnabled) {
   generateReportButton.disabled = !isEnabled;
 }
 
-async function readFileAsRows(file) {
-  const workbook = XLSX.read(await file.arrayBuffer());
+function workbookToRows(workbook) {
   const firstSheetName = workbook.SheetNames[0];
 
   if (!firstSheetName) {
@@ -125,21 +163,30 @@ async function readFileAsRows(file) {
   };
 }
 
+async function readFileAsRows(file) {
+  return workbookToRows(XLSX.read(await file.arrayBuffer()));
+}
+
+function readCsvTextAsRows(csvText) {
+  return workbookToRows(XLSX.read(csvText, { type: "string" }));
+}
+
 function normalizeHeaderName(header) {
   return String(header).trim().toLowerCase();
 }
 
 function normalizeHeaders(headers) {
   const headerMap = new Map();
+  const knownColumns = [...expectedColumns, ...optionalSourceColumns];
 
   headers.forEach((header) => {
     const normalizedHeader = normalizeHeaderName(header);
-    const expectedColumn = expectedColumns.find(
+    const knownColumn = knownColumns.find(
       (column) => headerSynonyms[column].includes(normalizedHeader),
     );
 
-    if (expectedColumn && !headerMap.has(expectedColumn)) {
-      headerMap.set(expectedColumn, String(header));
+    if (knownColumn && !headerMap.has(knownColumn)) {
+      headerMap.set(knownColumn, String(header));
     }
   });
 
@@ -147,7 +194,14 @@ function normalizeHeaders(headers) {
 }
 
 function validateRequiredColumns(headerMap) {
-  return requiredColumns.filter((column) => !headerMap.has(column));
+  const missing = requiredColumns.filter((column) => !headerMap.has(column));
+
+  // Cost is satisfied by either column: a real cost, or a profit we can subtract.
+  if (!headerMap.has("Cost") && !headerMap.has("Profit")) {
+    missing.push("Cost (or Profit)");
+  }
+
+  return missing;
 }
 
 function isEmptyValue(value) {
@@ -155,7 +209,7 @@ function isEmptyValue(value) {
 }
 
 function isBlankRow(rawRow, headerMap) {
-  return expectedColumns.every((column) => {
+  return [...expectedColumns, ...optionalSourceColumns].every((column) => {
     const sourceHeader = headerMap.get(column);
     return !sourceHeader || isEmptyValue(rawRow[sourceHeader]);
   });
@@ -167,7 +221,7 @@ function parseDate(value) {
   }
 
   const serial = typeof value === "number" ? value : Number(String(value).trim());
-  if (!isEmptyValue(value) && Number.isFinite(serial) && String(value).trim() !== "") {
+  if (!isEmptyValue(value) && Number.isFinite(serial)) {
     const parsedSerial = XLSX.SSF.parse_date_code(serial);
     if (parsedSerial) {
       return new Date(parsedSerial.y, parsedSerial.m - 1, parsedSerial.d);
@@ -176,8 +230,9 @@ function parseDate(value) {
 
   if (typeof value === "string" && value.trim()) {
     const dateString = value.trim();
-    const plainDateMatch = dateString.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    const slashDateMatch = dateString.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    const plainDateMatch = dateString.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    // Single-digit components are allowed: real exports write 11/8/2016, not 11/08/2016.
+    const slashDateMatch = dateString.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
     const parsedDate = plainDateMatch
       ? new Date(Number(plainDateMatch[1]), Number(plainDateMatch[2]) - 1, Number(plainDateMatch[3]))
       : slashDateMatch
@@ -200,12 +255,30 @@ function parseNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function discountToPromotion(discountValue) {
+  const discount = parseNumber(discountValue);
+
+  if (discount === null || discount === 0) {
+    return "";
+  }
+
+  // Files express discounts either as a fraction (0.2) or as a percentage (20).
+  const percent = discount > 1 ? discount : discount * 100;
+  return `${Math.round(percent)}% discount`;
+}
+
 function coerceRow(rawRow, headerMap) {
   const valueFor = (column) => rawRow[headerMap.get(column)];
   const date = parseDate(valueFor("Date"));
   const quantity = parseNumber(valueFor("Quantity"));
   const revenue = parseNumber(valueFor("Revenue"));
-  const cost = parseNumber(valueFor("Cost"));
+  const statedCost = parseNumber(valueFor("Cost"));
+  const profit = parseNumber(valueFor("Profit"));
+  // A real cost always wins; otherwise recover it from profit. Negative profit is kept
+  // as-is, so a loss-making row correctly reports a cost above its revenue.
+  const cost = statedCost === null && profit !== null && revenue !== null
+    ? revenue - profit
+    : statedCost;
 
   if (!date || quantity === null || revenue === null || cost === null) {
     return null;
@@ -213,7 +286,7 @@ function coerceRow(rawRow, headerMap) {
 
   const promotionValue = headerMap.has("Promotion")
     ? String(valueFor("Promotion")).trim()
-    : "";
+    : discountToPromotion(valueFor("Discount"));
 
   return {
     date,
@@ -227,55 +300,223 @@ function coerceRow(rawRow, headerMap) {
   };
 }
 
-async function parseAndValidateFile(file) {
+function ingestRows({ rawRows, headers }, sourceLabel) {
   parsedSalesRows = [];
   invalidSalesRows = [];
+  currentReport = null;
+  selectedPeriodKey = null;
+  expandedSections.clear();
   setGenerateButtonEnabled(false);
+  reportControls.hidden = true;
 
+  const headerMap = normalizeHeaders(headers);
+  const missingColumns = validateRequiredColumns(headerMap);
+
+  if (missingColumns.length) {
+    clearSelectedFile();
+    showUploadError(`Missing required column(s): ${missingColumns.join(", ")}.`);
+    return;
+  }
+
+  rawRows.forEach((rawRow) => {
+    if (isBlankRow(rawRow, headerMap)) {
+      return;
+    }
+
+    const row = coerceRow(rawRow, headerMap);
+    if (row) {
+      parsedSalesRows.push(row);
+    } else {
+      invalidSalesRows.push(rawRow);
+    }
+  });
+
+  if (!parsedSalesRows.length) {
+    clearSelectedFile();
+    showUploadError("No valid sales rows were found in this file.");
+    return;
+  }
+
+  selectedFileName.textContent =
+    `Loaded: ${sourceLabel} (${parsedSalesRows.length.toLocaleString()} rows)`;
+  setGenerateButtonEnabled(true);
+  reportControls.hidden = false;
+  populatePeriods();
+
+  if (invalidSalesRows.length) {
+    showUploadError(
+      `${invalidSalesRows.length} row${invalidSalesRows.length === 1 ? " was" : "s were"} skipped due to invalid dates or numbers.`,
+    );
+    return;
+  }
+
+  clearUploadError();
+}
+
+async function parseAndValidateFile(file) {
   try {
-    const { rawRows, headers } = await readFileAsRows(file);
-    const headerMap = normalizeHeaders(headers);
-    const missingColumns = validateRequiredColumns(headerMap);
-
-    if (missingColumns.length) {
-      showUploadError(`Missing required column(s): ${missingColumns.join(", ")}.`);
-      return;
-    }
-
-    rawRows.forEach((rawRow) => {
-      if (isBlankRow(rawRow, headerMap)) {
-        return;
-      }
-
-      const row = coerceRow(rawRow, headerMap);
-      if (row) {
-        parsedSalesRows.push(row);
-      } else {
-        invalidSalesRows.push(rawRow);
-      }
-    });
-
-    if (!parsedSalesRows.length) {
-      showUploadError("No valid sales rows were found in this file.");
-      return;
-    }
-
-    setGenerateButtonEnabled(true);
-
-    if (invalidSalesRows.length) {
-      showUploadError(
-        `${invalidSalesRows.length} row${invalidSalesRows.length === 1 ? " was" : "s were"} skipped due to invalid dates or numbers.`,
-      );
-      return;
-    }
-
-    clearUploadError();
+    ingestRows(await readFileAsRows(file), file.name);
   } catch (error) {
     showUploadError(`Unable to read this file: ${error.message}`);
   }
 }
 
-const NO_PROMOTION_LABEL = "No promotion";
+function loadSuperstoreData() {
+  const data = window.SUPERSTORE_DATA;
+
+  if (!data) {
+    showUploadError("Embedded Superstore data is unavailable.");
+    return;
+  }
+
+  salesFileInput.value = "";
+  clearUploadError();
+  setApiStatus("");
+  // Rebuilt into the same shape readFileAsRows returns, so the embedded data goes
+  // through exactly the same header matching and coercion as an uploaded file.
+  const rawRows = data.rows.map((values) =>
+    Object.fromEntries(data.headers.map((header, index) => [header, values[index]])),
+  );
+  ingestRows({ rawRows, headers: data.headers }, "Superstore dataset");
+}
+
+function setApiStatus(message, state) {
+  apiStatus.textContent = message;
+
+  if (state) {
+    apiStatus.dataset.state = state;
+  } else {
+    delete apiStatus.dataset.state;
+  }
+}
+
+// The archive is ZIP64, so both size fields in the local header read 0xFFFFFFFF and the
+// real 64-bit sizes live in the extra field. Reading the header fields alone yields the
+// sentinel, not a length.
+function readZip64Sizes(view, extraStart, extraLength) {
+  let offset = extraStart;
+  const end = extraStart + extraLength;
+
+  while (offset + 4 <= end) {
+    const headerId = view.getUint16(offset, true);
+    const dataSize = view.getUint16(offset + 2, true);
+
+    if (headerId === 0x0001 && dataSize >= 16) {
+      return {
+        uncompressedSize: Number(view.getBigUint64(offset + 4, true)),
+        compressedSize: Number(view.getBigUint64(offset + 12, true)),
+      };
+    }
+
+    offset += 4 + dataSize;
+  }
+
+  return null;
+}
+
+function findCsvEntry(buffer) {
+  const view = new DataView(buffer);
+  let offset = 0;
+
+  while (offset + 30 <= buffer.byteLength
+    && view.getUint32(offset, true) === LOCAL_FILE_HEADER_SIGNATURE) {
+    const method = view.getUint16(offset + 8, true);
+    const nameLength = view.getUint16(offset + 26, true);
+    const extraLength = view.getUint16(offset + 28, true);
+    const name = new TextDecoder().decode(new Uint8Array(buffer, offset + 30, nameLength));
+    const dataStart = offset + 30 + nameLength + extraLength;
+    let compressedSize = view.getUint32(offset + 18, true);
+    let uncompressedSize = view.getUint32(offset + 22, true);
+
+    if (compressedSize === ZIP64_SENTINEL || uncompressedSize === ZIP64_SENTINEL) {
+      const zip64Sizes = readZip64Sizes(view, offset + 30 + nameLength, extraLength);
+
+      if (!zip64Sizes) {
+        throw new Error(`ZIP64 entry "${name}" is missing its extended size field.`);
+      }
+
+      compressedSize = zip64Sizes.compressedSize;
+      uncompressedSize = zip64Sizes.uncompressedSize;
+    }
+
+    if (name.toLowerCase().endsWith(".csv")) {
+      return { method, dataStart, compressedSize, uncompressedSize, name };
+    }
+
+    offset = dataStart + compressedSize;
+  }
+
+  throw new Error("No CSV file was found inside the downloaded archive.");
+}
+
+async function inflateRaw(bytes) {
+  const stream = new Blob([bytes]).stream()
+    .pipeThrough(new DecompressionStream("deflate-raw"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function extractCsvText(buffer) {
+  const entry = findCsvEntry(buffer);
+  const payload = new Uint8Array(buffer, entry.dataStart, entry.compressedSize);
+  const csvBytes = entry.method === 8 ? await inflateRaw(payload) : payload;
+
+  if (entry.method !== 8 && entry.method !== 0) {
+    throw new Error(`Unsupported compression method ${entry.method}.`);
+  }
+
+  if (csvBytes.length !== entry.uncompressedSize) {
+    throw new Error(
+      `Corrupt archive: expected ${entry.uncompressedSize} bytes, got ${csvBytes.length}.`,
+    );
+  }
+
+  // The published file is Windows-1252, not UTF-8; decoding it as UTF-8 corrupts the
+  // non-breaking spaces inside several product names.
+  return new TextDecoder("windows-1252").decode(csvBytes);
+}
+
+async function fetchSuperstoreFromApi() {
+  fetchSuperstoreButton.disabled = true;
+  setApiStatus("Requesting the dataset from the Kaggle API…", "loading");
+
+  try {
+    const response = await fetch(KAGGLE_DATASET_URL);
+
+    if (!response.ok) {
+      throw new Error(`Kaggle responded with HTTP ${response.status}.`);
+    }
+
+    const buffer = await response.arrayBuffer();
+    const signature = new TextDecoder().decode(new Uint8Array(buffer, 0, 2));
+
+    // A redirect to a sign-in page can still arrive as HTTP 200, so confirm this is
+    // really an archive before trusting any of it.
+    if (signature !== "PK") {
+      throw new Error("Kaggle returned a page instead of a dataset.");
+    }
+
+    setApiStatus("Unpacking and parsing the dataset…", "loading");
+    const csvText = await extractCsvText(buffer);
+    salesFileInput.value = "";
+    clearUploadError();
+    ingestRows(readCsvTextAsRows(csvText), "Superstore dataset (live from Kaggle API)");
+
+    if (parsedSalesRows.length) {
+      const downloadedKb = Math.round(buffer.byteLength / 1024);
+      setApiStatus(
+        `Fetched live from the Kaggle API: ${parsedSalesRows.length.toLocaleString()} rows (${downloadedKb} KB downloaded).`,
+        "success",
+      );
+    }
+  } catch (error) {
+    setApiStatus(
+      `Live fetch failed: ${error.message} Use "Load Superstore Data" for the offline copy.`,
+      "error",
+    );
+  } finally {
+    fetchSuperstoreButton.disabled = false;
+  }
+}
 
 function getWeekStart(date) {
   const weekStart = new Date(date);
@@ -286,67 +527,100 @@ function getWeekStart(date) {
   return weekStart;
 }
 
-function getWeekKey(date) {
+function getPeriodKey(date, granularity) {
+  const year = date.getFullYear();
+
+  if (granularity === "month") {
+    return `${year}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  }
+
   const weekStart = getWeekStart(date);
-  const year = weekStart.getFullYear();
   const month = String(weekStart.getMonth() + 1).padStart(2, "0");
   const day = String(weekStart.getDate()).padStart(2, "0");
 
-  return `${year}-${month}-${day}`;
+  return `${weekStart.getFullYear()}-${month}-${day}`;
 }
 
-function groupRowsByProduct(rows) {
-  const productGroups = new Map();
+function formatPeriodLabel(periodKey, granularity) {
+  if (granularity === "week") {
+    return `Week of ${periodKey}`;
+  }
+
+  const [year, month] = periodKey.split("-");
+  return new Date(Number(year), Number(month) - 1, 1).toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function groupRowsBy(rows, getKey) {
+  const groups = new Map();
 
   rows.forEach((row) => {
-    const group = productGroups.get(row.product) || [];
+    const key = getKey(row);
+    const group = groups.get(key) || [];
     group.push(row);
-    productGroups.set(row.product, group);
+    groups.set(key, group);
   });
 
-  return productGroups;
+  return groups;
 }
 
-function groupRowsByCustomer(rows) {
-  const customerGroups = new Map();
-
-  rows.forEach((row) => {
-    const group = customerGroups.get(row.customer) || [];
-    group.push(row);
-    customerGroups.set(row.customer, group);
-  });
-
-  return customerGroups;
+function groupRowsByPeriod(rows, granularity) {
+  return groupRowsBy(rows, (row) => getPeriodKey(row.date, granularity));
 }
 
-function groupRowsByPromotion(rows) {
-  const promotionGroups = new Map();
-
-  rows.forEach((row) => {
-    const promotionKey = row.promotion === null ? NO_PROMOTION_LABEL : row.promotion;
-    const group = promotionGroups.get(promotionKey) || [];
-    group.push(row);
-    promotionGroups.set(promotionKey, group);
-  });
-
-  return promotionGroups;
+function getSortedPeriodKeys(rows, granularity) {
+  return Array.from(groupRowsByPeriod(rows, granularity).keys()).sort();
 }
 
-function groupRowsByWeek(rows) {
-  const weekGroups = new Map();
+function populatePeriods() {
+  const periodKeys = getSortedPeriodKeys(parsedSalesRows, selectedGranularity).reverse();
 
-  rows.forEach((row) => {
-    const weekKey = getWeekKey(row.date);
-    const group = weekGroups.get(weekKey) || [];
-    group.push(row);
-    weekGroups.set(weekKey, group);
-  });
+  if (!periodKeys.includes(selectedPeriodKey)) {
+    selectedPeriodKey = periodKeys[0] || null;
+  }
 
-  return weekGroups;
+  periodSelect.innerHTML = periodKeys
+    .map((periodKey) => {
+      const label = escapeHtml(formatPeriodLabel(periodKey, selectedGranularity));
+      return `<option value="${escapeHtml(periodKey)}">${label}</option>`;
+    })
+    .join("");
+  periodSelect.value = selectedPeriodKey || "";
 }
 
-function getSortedWeekKeys(weekGroups) {
-  return Array.from(weekGroups.keys()).sort();
+function handleGranularityChange() {
+  selectedGranularity = granularitySelect.value;
+  expandedSections.clear();
+  // The period list is granularity-specific, so the previous selection rarely survives.
+  selectedPeriodKey = null;
+  populatePeriods();
+  renderCurrentReport();
+}
+
+function handlePeriodChange() {
+  selectedPeriodKey = periodSelect.value;
+  expandedSections.clear();
+  renderCurrentReport();
+}
+
+function handleReportOutputClick(event) {
+  const toggleButton = event.target.closest("[data-section]");
+
+  if (!toggleButton || !currentReport) {
+    return;
+  }
+
+  const section = toggleButton.dataset.section;
+
+  if (expandedSections.has(section)) {
+    expandedSections.delete(section);
+  } else {
+    expandedSections.add(section);
+  }
+
+  reportOutput.innerHTML = renderReport(currentReport);
 }
 
 function roundTo(value, decimalPlaces) {
@@ -384,7 +658,7 @@ function calculateProfit(totalRevenue, totalCost) {
 }
 
 function calculateProductPerformance(rows) {
-  return Array.from(groupRowsByProduct(rows), ([product, productRows]) => {
+  return Array.from(groupRowsBy(rows, (row) => row.product), ([product, productRows]) => {
     const totals = calculateTotals(productRows);
     const { totalProfit } = calculateProfit(totals.totalRevenue, totals.totalCost);
 
@@ -400,7 +674,7 @@ function calculateProductPerformance(rows) {
 }
 
 function calculateCustomerPerformance(rows) {
-  return Array.from(groupRowsByCustomer(rows), ([customer, customerRows]) => {
+  return Array.from(groupRowsBy(rows, (row) => row.customer), ([customer, customerRows]) => {
     const totals = calculateTotals(customerRows);
 
     return {
@@ -413,7 +687,9 @@ function calculateCustomerPerformance(rows) {
 }
 
 function calculatePromotionPerformance(rows) {
-  return Array.from(groupRowsByPromotion(rows), ([promotion, promotionRows]) => {
+  const groups = groupRowsBy(rows, (row) => row.promotion ?? NO_PROMOTION_LABEL);
+
+  return Array.from(groups, ([promotion, promotionRows]) => {
     const totals = calculateTotals(promotionRows);
 
     return {
@@ -440,22 +716,22 @@ function calculateBestAndLowestSellingProducts(productPerformance) {
   };
 }
 
-function calculateWeekComparison(rows) {
-  const weekGroups = groupRowsByWeek(rows);
-  const weekKeys = getSortedWeekKeys(weekGroups);
-  const currentWeekKey = weekKeys.at(-1) || null;
-  const previousWeekKey = weekKeys.at(-2) || null;
-  const calculateWeekTotals = (weekRows) => {
-    const totals = calculateTotals(weekRows);
+function calculatePeriodComparison(rows, granularity, periodKey) {
+  const periodGroups = groupRowsByPeriod(rows, granularity);
+  const periodKeys = Array.from(periodGroups.keys()).sort();
+  const currentIndex = periodKeys.indexOf(periodKey);
+  // The preceding period *present in the data*, not the calendar-adjacent one, so a gap
+  // in the file cannot produce a phantom -100%.
+  const previousPeriodKey = currentIndex > 0 ? periodKeys[currentIndex - 1] : null;
+  const calculatePeriodTotals = (key) => {
+    const totals = calculateTotals(periodGroups.get(key) || []);
     const { totalProfit } = calculateProfit(totals.totalRevenue, totals.totalCost);
 
     return { ...totals, totalProfit };
   };
-  const currentWeekTotals = currentWeekKey
-    ? calculateWeekTotals(weekGroups.get(currentWeekKey))
-    : calculateWeekTotals([]);
-  const previousWeekTotals = previousWeekKey
-    ? calculateWeekTotals(weekGroups.get(previousWeekKey))
+  const currentPeriodTotals = calculatePeriodTotals(periodKey);
+  const previousPeriodTotals = previousPeriodKey
+    ? calculatePeriodTotals(previousPeriodKey)
     : null;
   const percentChangeFor = (currentValue, previousValue) => {
     // A zero baseline has no meaningful percentage change.
@@ -467,27 +743,27 @@ function calculateWeekComparison(rows) {
   };
 
   return {
-    currentWeekKey,
-    previousWeekKey,
-    currentWeekTotals,
-    previousWeekTotals,
-    percentChange: previousWeekTotals
+    currentPeriodKey: periodKey,
+    previousPeriodKey,
+    currentPeriodTotals,
+    previousPeriodTotals,
+    percentChange: previousPeriodTotals
       ? {
           revenue: percentChangeFor(
-            currentWeekTotals.totalRevenue,
-            previousWeekTotals.totalRevenue,
+            currentPeriodTotals.totalRevenue,
+            previousPeriodTotals.totalRevenue,
           ),
           profit: percentChangeFor(
-            currentWeekTotals.totalProfit,
-            previousWeekTotals.totalProfit,
+            currentPeriodTotals.totalProfit,
+            previousPeriodTotals.totalProfit,
           ),
           orders: percentChangeFor(
-            currentWeekTotals.totalOrders,
-            previousWeekTotals.totalOrders,
+            currentPeriodTotals.totalOrders,
+            previousPeriodTotals.totalOrders,
           ),
           unitsSold: percentChangeFor(
-            currentWeekTotals.totalUnitsSold,
-            previousWeekTotals.totalUnitsSold,
+            currentPeriodTotals.totalUnitsSold,
+            previousPeriodTotals.totalUnitsSold,
           ),
         }
       : { revenue: null, profit: null, orders: null, unitsSold: null },
@@ -496,12 +772,12 @@ function calculateWeekComparison(rows) {
 
 function calculateAlerts(report) {
   const alerts = [];
-  const revenueChange = report.weekComparison.percentChange.revenue;
+  const revenueChange = report.periodComparison.percentChange.revenue;
 
   if (revenueChange !== null && revenueChange <= -20) {
     alerts.push({
       severity: "warning",
-      message: `Revenue declined ${Math.abs(revenueChange).toFixed(1)}% from the previous week.`,
+      message: `Revenue declined ${Math.abs(revenueChange).toFixed(1)}% from the previous ${report.granularity}.`,
     });
   }
 
@@ -522,15 +798,20 @@ function calculateAlerts(report) {
   return alerts;
 }
 
-function buildReport(rows) {
-  const totals = calculateTotals(rows);
+function buildReport(rows, { granularity, periodKey }) {
+  // Every figure below describes the selected period only; the comparison is the one
+  // place that still needs the full set of rows.
+  const periodRows = rows.filter((row) => getPeriodKey(row.date, granularity) === periodKey);
+  const totals = calculateTotals(periodRows);
   const profit = calculateProfit(totals.totalRevenue, totals.totalCost);
-  const productPerformance = calculateProductPerformance(rows);
-  const customerPerformance = calculateCustomerPerformance(rows);
-  const promotionPerformance = calculatePromotionPerformance(rows);
+  const productPerformance = calculateProductPerformance(periodRows);
+  const customerPerformance = calculateCustomerPerformance(periodRows);
+  const promotionPerformance = calculatePromotionPerformance(periodRows);
   const { bestSelling, lowestSelling } = calculateBestAndLowestSellingProducts(productPerformance);
-  const weekComparison = calculateWeekComparison(rows);
+  const periodComparison = calculatePeriodComparison(rows, granularity, periodKey);
   const report = {
+    granularity,
+    periodKey,
     totals,
     profit,
     productPerformance,
@@ -538,7 +819,7 @@ function buildReport(rows) {
     promotionPerformance,
     bestSelling,
     lowestSelling,
-    weekComparison,
+    periodComparison,
   };
 
   return { ...report, alerts: calculateAlerts(report) };
@@ -564,6 +845,10 @@ function formatPercent(value) {
   return `${Number(value).toFixed(1)}%`;
 }
 
+function formatComparisonTitle(granularity) {
+  return granularity === "week" ? "Week-over-week comparison" : "Month-over-month comparison";
+}
+
 function renderSummaryCards(report) {
   const cards = [
     ["Total Revenue", formatMoney(report.totals.totalRevenue)],
@@ -578,9 +863,11 @@ function renderSummaryCards(report) {
   return `<section class="report-section"><h3>Summary</h3><div class="summary-grid">${cards.map(([label, value, detail]) => `<article class="summary-card"><span class="summary-card-label">${escapeHtml(label)}</span><strong class="summary-card-value">${escapeHtml(value)}</strong>${detail ? `<span class="summary-card-detail">${escapeHtml(detail)}</span>` : ""}</article>`).join("")}</div></section>`;
 }
 
-function renderWeekComparison(weekComparison) {
-  if (!weekComparison.previousWeekKey) {
-    return `<section class="report-section"><h3>Week-over-week comparison</h3><p class="report-empty-state">No previous week data to compare yet.</p></section>`;
+function renderPeriodComparison(periodComparison, granularity) {
+  const title = formatComparisonTitle(granularity);
+
+  if (!periodComparison.previousPeriodKey) {
+    return `<section class="report-section"><h3>${title}</h3><p class="report-empty-state">No previous ${granularity} data to compare yet.</p></section>`;
   }
 
   const metrics = [
@@ -590,27 +877,56 @@ function renderWeekComparison(weekComparison) {
     ["Units sold", "totalUnitsSold", "unitsSold", (value) => value.toLocaleString()],
   ];
   const cards = metrics.map(([label, totalKey, changeKey, formatter]) => {
-    const change = weekComparison.percentChange[changeKey];
+    const change = periodComparison.percentChange[changeKey];
     const changeClass = change === null || change === 0 ? "change-neutral" : change > 0 ? "change-positive" : "change-negative";
     const changeText = change === null ? "No percentage baseline" : `${change > 0 ? "+" : ""}${formatPercent(change)}`;
-    return `<article class="comparison-card"><span class="comparison-label">${label}</span><p class="comparison-values">Current: ${formatter(weekComparison.currentWeekTotals[totalKey])}<br>Previous: ${formatter(weekComparison.previousWeekTotals[totalKey])}</p><span class="${changeClass}">${changeText}</span></article>`;
+    return `<article class="comparison-card"><span class="comparison-label">${label}</span><p class="comparison-values">Current: ${formatter(periodComparison.currentPeriodTotals[totalKey])}<br>Previous: ${formatter(periodComparison.previousPeriodTotals[totalKey])}</p><span class="${changeClass}">${changeText}</span></article>`;
   }).join("");
+  const currentLabel = escapeHtml(formatPeriodLabel(periodComparison.currentPeriodKey, granularity));
+  const previousLabel = escapeHtml(formatPeriodLabel(periodComparison.previousPeriodKey, granularity));
 
-  return `<section class="report-section"><h3>Week-over-week comparison</h3><p class="summary-card-detail">${escapeHtml(weekComparison.currentWeekKey)} compared with ${escapeHtml(weekComparison.previousWeekKey)}</p><div class="comparison-grid">${cards}</div></section>`;
+  return `<section class="report-section"><h3>${title}</h3><p class="summary-card-detail">${currentLabel} compared with ${previousLabel}</p><div class="comparison-grid">${cards}</div></section>`;
 }
 
 function renderTable(headers, rows) {
   return `<div class="table-wrap"><table class="report-table"><thead><tr>${headers.map((header) => `<th scope="col">${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
+// Real files carry hundreds of products and customers, so only the strongest are shown
+// until asked otherwise. The CSV export is never truncated.
+function renderTruncatedSection(title, sectionKey, itemNoun, headers, items, renderRow) {
+  const isExpanded = expandedSections.has(sectionKey);
+  const visibleItems = isExpanded ? items : items.slice(0, TOP_ROW_COUNT);
+  const toggleLabel = isExpanded
+    ? `Show top ${TOP_ROW_COUNT}`
+    : `Show all ${items.length.toLocaleString()} ${itemNoun}`;
+  const toggleButton = items.length > TOP_ROW_COUNT
+    ? `<button type="button" class="table-toggle" data-section="${escapeHtml(sectionKey)}">${escapeHtml(toggleLabel)}</button>`
+    : "";
+
+  return `<section class="report-section"><h3>${escapeHtml(title)}</h3>${renderTable(headers, visibleItems.map(renderRow).join(""))}${toggleButton}</section>`;
+}
+
 function renderProductTable(productPerformance) {
-  const rows = productPerformance.map((product) => `<tr><td>${escapeHtml(product.product)}</td><td>${formatMoney(product.revenue)}</td><td>${formatMoney(product.cost)}</td><td>${formatMoney(product.profit)}</td><td>${product.unitsSold.toLocaleString()}</td><td>${product.orderCount.toLocaleString()}</td></tr>`).join("");
-  return `<section class="report-section"><h3>Product performance</h3>${renderTable(["Product", "Revenue", "Cost", "Profit", "Units Sold", "Orders"], rows)}</section>`;
+  return renderTruncatedSection(
+    "Product performance",
+    "products",
+    "products",
+    ["Product", "Revenue", "Cost", "Profit", "Units Sold", "Orders"],
+    productPerformance,
+    (product) => `<tr><td>${escapeHtml(product.product)}</td><td>${formatMoney(product.revenue)}</td><td>${formatMoney(product.cost)}</td><td>${formatMoney(product.profit)}</td><td>${product.unitsSold.toLocaleString()}</td><td>${product.orderCount.toLocaleString()}</td></tr>`,
+  );
 }
 
 function renderCustomerTable(customerPerformance) {
-  const rows = customerPerformance.map((customer) => `<tr><td>${escapeHtml(customer.customer)}</td><td>${formatMoney(customer.revenue)}</td><td>${customer.unitsSold.toLocaleString()}</td><td>${customer.orderCount.toLocaleString()}</td></tr>`).join("");
-  return `<section class="report-section"><h3>Customer performance</h3>${renderTable(["Customer", "Revenue", "Units Sold", "Orders"], rows)}</section>`;
+  return renderTruncatedSection(
+    "Customer performance",
+    "customers",
+    "customers",
+    ["Customer", "Revenue", "Units Sold", "Orders"],
+    customerPerformance,
+    (customer) => `<tr><td>${escapeHtml(customer.customer)}</td><td>${formatMoney(customer.revenue)}</td><td>${customer.unitsSold.toLocaleString()}</td><td>${customer.orderCount.toLocaleString()}</td></tr>`,
+  );
 }
 
 function renderPromotionSection(promotionPerformance) {
@@ -629,7 +945,7 @@ function renderReport(report) {
   return [
     renderAlerts(report.alerts),
     renderSummaryCards(report),
-    renderWeekComparison(report.weekComparison),
+    renderPeriodComparison(report.periodComparison, report.granularity),
     renderProductTable(report.productPerformance),
     renderCustomerTable(report.customerPerformance),
     renderPromotionSection(report.promotionPerformance),
@@ -657,6 +973,7 @@ function buildReportCsv(report) {
   };
 
   addSection("Summary", ["Metric", "Value"], [
+    ["Period", formatPeriodLabel(report.periodKey, report.granularity)],
     ["Total Revenue", report.totals.totalRevenue],
     ["Total Cost", report.totals.totalCost],
     ["Total Profit", report.profit.totalProfit],
@@ -667,19 +984,21 @@ function buildReportCsv(report) {
     ["Lowest-Selling Product", report.lowestSelling?.product ?? ""],
   ]);
 
-  const { weekComparison } = report;
-  const weekRows = weekComparison.previousWeekKey
+  const { periodComparison } = report;
+  const comparisonRows = periodComparison.previousPeriodKey
     ? [
-        ["Revenue", weekComparison.currentWeekTotals.totalRevenue, weekComparison.previousWeekTotals.totalRevenue, weekComparison.percentChange.revenue],
-        ["Profit", weekComparison.currentWeekTotals.totalProfit, weekComparison.previousWeekTotals.totalProfit, weekComparison.percentChange.profit],
-        ["Orders", weekComparison.currentWeekTotals.totalOrders, weekComparison.previousWeekTotals.totalOrders, weekComparison.percentChange.orders],
-        ["Units Sold", weekComparison.currentWeekTotals.totalUnitsSold, weekComparison.previousWeekTotals.totalUnitsSold, weekComparison.percentChange.unitsSold],
+        ["Revenue", periodComparison.currentPeriodTotals.totalRevenue, periodComparison.previousPeriodTotals.totalRevenue, periodComparison.percentChange.revenue],
+        ["Profit", periodComparison.currentPeriodTotals.totalProfit, periodComparison.previousPeriodTotals.totalProfit, periodComparison.percentChange.profit],
+        ["Orders", periodComparison.currentPeriodTotals.totalOrders, periodComparison.previousPeriodTotals.totalOrders, periodComparison.percentChange.orders],
+        ["Units Sold", periodComparison.currentPeriodTotals.totalUnitsSold, periodComparison.previousPeriodTotals.totalUnitsSold, periodComparison.percentChange.unitsSold],
       ]
-    : [["No previous week data to compare yet."]];
+    : [[`No previous ${report.granularity} data to compare yet.`]];
   addSection(
-    "Week-over-Week Comparison",
-    weekComparison.previousWeekKey ? ["Metric", "Current Week", "Previous Week", "% Change"] : null,
-    weekRows,
+    formatComparisonTitle(report.granularity),
+    periodComparison.previousPeriodKey
+      ? [`Metric`, `Current ${report.granularity}`, `Previous ${report.granularity}`, "% Change"]
+      : null,
+    comparisonRows,
   );
 
   addSection(
@@ -709,10 +1028,8 @@ function buildReportCsv(report) {
 }
 
 function getReportFileName(report) {
-  const weekKey = report.weekComparison.currentWeekKey;
-
-  if (weekKey) {
-    return `salesscope-report-${weekKey}.csv`;
+  if (report.periodKey) {
+    return `salesscope-report-${report.periodKey}.csv`;
   }
 
   const today = new Date();
@@ -736,14 +1053,22 @@ function downloadCurrentReport() {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
 }
 
+function renderCurrentReport() {
+  if (!selectedPeriodKey) {
+    return;
+  }
+
+  currentReport = buildReport(parsedSalesRows, {
+    granularity: selectedGranularity,
+    periodKey: selectedPeriodKey,
+  });
+  reportOutput.innerHTML = renderReport(currentReport);
+  downloadReportButton.hidden = false;
+  reportHeadingHint.textContent =
+    `Showing ${formatPeriodLabel(selectedPeriodKey, selectedGranularity)}.`;
+}
+
 function generateReport() {
   reportOutput.textContent = "Generating report...";
-
-  window.setTimeout(() => {
-    const report = buildReport(parsedSalesRows);
-    currentReport = report;
-    reportOutput.innerHTML = renderReport(report);
-    downloadReportButton.hidden = false;
-    reportHeadingHint.textContent = "Here's your generated report.";
-  }, 0);
+  window.setTimeout(renderCurrentReport, 0);
 }

@@ -5,19 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta
       name="description"
-      content="SalesBrief turns raw sales data into simple weekly reports."
+      content="SalesScope turns raw sales data into clear sales reports."
     >
-    <title>SalesBrief</title>
+    <title>SalesScope</title>
     <link rel="stylesheet" href="style.css">
   </head>
   <body>
     <main class="app-shell">
       <header class="hero">
-        <p class="eyebrow">Weekly sales reporting</p>
-        <h1>SalesBrief</h1>
+        <p class="eyebrow">Sales reporting</p>
+        <h1>SalesScope</h1>
         <p class="intro">
-          SalesBrief helps sales coordinators turn raw sales data into simple
-          weekly reports.
+          SalesScope helps sales coordinators turn raw sales data into clear
+          sales reports.
         </p>
       </header>
 
@@ -42,6 +42,10 @@
           >
         </label>
         <p id="selected-file-name" class="selected-file-name" aria-live="polite"></p>
+        <p class="upload-hint">Or use the Superstore dataset: 9,994 rows, 2014–2017.</p>
+        <button type="button" id="load-superstore-button">Load Superstore Data</button>
+        <button type="button" id="fetch-superstore-button">Fetch Live from Kaggle API</button>
+        <p id="api-status" class="api-status" aria-live="polite"></p>
         <p id="upload-error" class="upload-error" role="alert" hidden></p>
         <button type="button" id="generate-report-button" disabled>Generate Report</button>
         <button type="button" id="reset-button">Reset</button>
@@ -51,9 +55,13 @@
         <div class="section-heading">
           <span class="step-number" aria-hidden="true">2</span>
           <div>
-            <h2 id="report-heading">Weekly sales report</h2>
+            <h2 id="report-heading">Sales report</h2>
             <p id="report-heading-hint">Your generated report will appear here later.</p>
           </div>
+        </div>
+        <div id="report-controls" class="report-controls" hidden>
+          <label>Granularity <select id="granularity-select"><option value="month">Month</option><option value="week">Week</option></select></label>
+          <label>Period <select id="period-select"></select></label>
         </div>
         <div class="report-output" aria-live="polite"></div>
         <button type="button" id="download-report-button" hidden>Download Report</button>
@@ -61,6 +69,7 @@
     </main>
 
     <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <script src="superstore-data.js"></script>
     <script src="script.js"></script>
   </body>
 </html>

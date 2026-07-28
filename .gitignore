@@ -1,0 +1,7 @@
+# Kaggle API credentials - never commit these
+kaggle.json
+.kaggle/
+
+# OS / editor noise
+Thumbs.db
+.DS_Store

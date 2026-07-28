@@ -167,7 +167,8 @@ h1 {
   background: #fdf2f2;
 }
 
-#generate-report-button {
+#generate-report-button,
+#load-superstore-button {
   margin-top: 1rem;
   padding: 0.78rem 1.1rem;
   border: 1px solid #285f3b;
@@ -181,12 +182,14 @@ h1 {
   transition: background 160ms ease, transform 160ms ease, opacity 160ms ease;
 }
 
-#generate-report-button:hover:not(:disabled) {
+#generate-report-button:hover:not(:disabled),
+#load-superstore-button:hover:not(:disabled) {
   background: #285f3b;
   transform: translateY(-1px);
 }
 
-#generate-report-button:disabled {
+#generate-report-button:disabled,
+#load-superstore-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -211,7 +214,8 @@ h1 {
   text-decoration: underline;
 }
 
-#download-report-button {
+#download-report-button,
+#fetch-superstore-button {
   margin-top: 1rem;
   padding: 0.78rem 1.1rem;
   border: 1px solid #34734a;
@@ -225,10 +229,26 @@ h1 {
   transition: background 160ms ease, color 160ms ease, transform 160ms ease;
 }
 
-#download-report-button:hover {
+#download-report-button:hover,
+#fetch-superstore-button:hover:not(:disabled) {
   color: #ffffff;
   background: #34734a;
   transform: translateY(-1px);
+}
+
+#fetch-superstore-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.api-status {
+  margin: 0.6rem 0 0;
+  color: #526058;
+  font-size: 0.9rem;
+}
+
+.api-status[data-state="error"] {
+  color: #a4343a;
 }
 
 .upload-area input {
@@ -322,6 +342,11 @@ h1 {
 .alert-warning { border: 1px solid #e8c7c9; color: #8b3f45; background: #fdf2f2; }
 .alert-info { border: 1px solid #d8e2e8; color: #456473; background: #f2f7f9; }
 .report-empty-state { border: 1px solid #cce2d2; color: #285f3b; background: #e3f2e7; }
+
+.report-controls { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1rem 0; }
+.report-controls label { display: grid; gap: 0.35rem; color: #526058; font-weight: 700; }
+.report-controls select { min-width: 12rem; padding: 0.55rem; border: 1px solid #dce5dd; border-radius: 0.4rem; font: inherit; }
+.table-toggle { margin-top: 0.75rem; }
 
 @media (max-width: 560px) {
   .app-shell {
