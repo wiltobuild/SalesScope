@@ -36,18 +36,34 @@ const requiredColumns = [
 // Profit and Discount are alternative inputs, not report fields: Profit stands in for a
 // missing Cost, and Discount stands in for a missing Promotion.
 const optionalSourceColumns = ["Profit", "Discount"];
+const DIMENSIONS = [
+  { key: "product", label: "Product", noun: "products", synonyms: ["product", "product name", "product_name", "item", "item name"], required: true },
+  { key: "customer", label: "Customer", noun: "customers", synonyms: ["customer", "customer name", "customer_name", "client", "client name"], required: true },
+  { key: "promotion", label: "Promotion", noun: "promotions", synonyms: ["promotion", "promo", "campaign"], required: true },
+  { key: "category", label: "Category", noun: "categories", synonyms: ["category"] },
+  { key: "subCategory", label: "Sub-Category", noun: "sub-categories", synonyms: ["sub-category", "subcategory", "sub category"] },
+  { key: "region", label: "Region", noun: "regions", synonyms: ["region"] },
+  { key: "state", label: "State", noun: "states", synonyms: ["state", "province"] },
+  { key: "city", label: "City", noun: "cities", synonyms: ["city", "town"] },
+  { key: "segment", label: "Segment", noun: "segments", synonyms: ["segment", "customer segment"] },
+  { key: "shipMode", label: "Ship Mode", noun: "ship modes", synonyms: ["ship mode", "shipping mode", "ship_mode"] },
+];
 const headerSynonyms = {
   Date: ["date", "order date", "order_date", "sale date", "transaction date"],
   "Order ID": ["order id", "order_id", "orderid", "order #", "order number"],
-  Customer: ["customer", "customer name", "customer_name", "client", "client name"],
-  Product: ["product", "product name", "product_name", "item", "item name"],
+  Customer: DIMENSIONS.find((dimension) => dimension.key === "customer").synonyms,
+  Product: DIMENSIONS.find((dimension) => dimension.key === "product").synonyms,
   Quantity: ["quantity", "qty", "units sold", "units_sold", "unit sold", "units"],
   Revenue: ["revenue", "sales", "total revenue", "amount", "sales amount"],
   Cost: ["cost", "total cost", "total_cost", "cogs"],
-  Promotion: ["promotion", "promo", "campaign"],
+  Promotion: DIMENSIONS.find((dimension) => dimension.key === "promotion").synonyms,
   Profit: ["profit", "total profit", "margin", "gross profit"],
   Discount: ["discount"],
+  "Ship Date": ["ship date", "ship_date", "shipping date"],
 };
+DIMENSIONS.filter((dimension) => !dimension.required).forEach((dimension) => {
+  headerSynonyms[dimension.label] = dimension.synonyms;
+});
 const NO_PROMOTION_LABEL = "No promotion";
 const TOP_ROW_COUNT = 10;
 // Kaggle serves this dataset with Access-Control-Allow-Origin: *, so the browser can
@@ -62,6 +78,7 @@ let invalidSalesRows = [];
 let currentReport = null;
 let selectedGranularity = "month";
 let selectedPeriodKey = null;
+let availableDimensionKeys = new Set();
 const expandedSections = new Set();
 
 salesFileInput.addEventListener("change", handleFileInputChange);
@@ -83,6 +100,7 @@ function resetApp() {
   currentReport = null;
   selectedGranularity = "month";
   selectedPeriodKey = null;
+  availableDimensionKeys.clear();
   expandedSections.clear();
   clearSelectedFile();
   clearUploadError();
@@ -177,7 +195,7 @@ function normalizeHeaderName(header) {
 
 function normalizeHeaders(headers) {
   const headerMap = new Map();
-  const knownColumns = [...expectedColumns, ...optionalSourceColumns];
+  const knownColumns = [...expectedColumns, ...optionalSourceColumns, "Ship Date", ...DIMENSIONS.filter((dimension) => !dimension.required).map((dimension) => dimension.label)];
 
   headers.forEach((header) => {
     const normalizedHeader = normalizeHeaderName(header);
@@ -258,7 +276,7 @@ function parseNumber(value) {
 function discountToPromotion(discountValue) {
   const discount = parseNumber(discountValue);
 
-  if (discount === null || discount === 0) {
+  if (discount === null) {
     return "";
   }
 
@@ -274,6 +292,7 @@ function coerceRow(rawRow, headerMap) {
   const revenue = parseNumber(valueFor("Revenue"));
   const statedCost = parseNumber(valueFor("Cost"));
   const profit = parseNumber(valueFor("Profit"));
+  const shipDate = headerMap.has("Ship Date") ? parseDate(valueFor("Ship Date")) : null;
   // A real cost always wins; otherwise recover it from profit. Negative profit is kept
   // as-is, so a loss-making row correctly reports a cost above its revenue.
   const cost = statedCost === null && profit !== null && revenue !== null
@@ -288,7 +307,7 @@ function coerceRow(rawRow, headerMap) {
     ? String(valueFor("Promotion")).trim()
     : discountToPromotion(valueFor("Discount"));
 
-  return {
+  const row = {
     date,
     orderId: String(valueFor("Order ID")).trim(),
     customer: String(valueFor("Customer")).trim(),
@@ -297,7 +316,23 @@ function coerceRow(rawRow, headerMap) {
     revenue,
     cost,
     promotion: promotionValue || null,
+    isLoss: profit !== null ? profit < 0 : revenue - cost < 0,
   };
+
+  DIMENSIONS.filter((dimension) => !dimension.required).forEach((dimension) => {
+    const sourceHeader = headerMap.get(dimension.label);
+    if (sourceHeader) {
+      row[dimension.key] = String(rawRow[sourceHeader]).trim() || null;
+    }
+  });
+
+  if (shipDate) {
+    row.shipDate = shipDate;
+    // UTC date components avoid fractional durations during daylight-saving changes.
+    row.deliveryDays = Math.round((Date.UTC(shipDate.getFullYear(), shipDate.getMonth(), shipDate.getDate()) - Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())) / 86400000);
+  }
+
+  return row;
 }
 
 function ingestRows({ rawRows, headers }, sourceLabel) {
@@ -311,6 +346,10 @@ function ingestRows({ rawRows, headers }, sourceLabel) {
 
   const headerMap = normalizeHeaders(headers);
   const missingColumns = validateRequiredColumns(headerMap);
+  availableDimensionKeys = new Set(
+    DIMENSIONS.filter((dimension) => dimension.required || headerMap.has(dimension.label))
+      .map((dimension) => dimension.key),
+  );
 
   if (missingColumns.length) {
     clearSelectedFile();
@@ -657,44 +696,28 @@ function calculateProfit(totalRevenue, totalCost) {
   };
 }
 
-function calculateProductPerformance(rows) {
-  return Array.from(groupRowsBy(rows, (row) => row.product), ([product, productRows]) => {
-    const totals = calculateTotals(productRows);
-    const { totalProfit } = calculateProfit(totals.totalRevenue, totals.totalCost);
+function calculateBreakdown(rows, dimensionKey) {
+  const dimension = DIMENSIONS.find((candidate) => candidate.key === dimensionKey);
+
+  if (!dimension) {
+    throw new Error(`Unknown dimension: ${dimensionKey}`);
+  }
+
+  const groups = groupRowsBy(rows, (row) => {
+    const value = row[dimensionKey];
+    return value || (dimensionKey === "promotion" ? NO_PROMOTION_LABEL : "(not set)");
+  });
+
+  return Array.from(groups, ([value, dimensionRows]) => {
+    const totals = calculateTotals(dimensionRows);
+    const { totalProfit, profitMargin } = calculateProfit(totals.totalRevenue, totals.totalCost);
 
     return {
-      product,
+      value,
       revenue: totals.totalRevenue,
       cost: totals.totalCost,
       profit: totalProfit,
-      unitsSold: totals.totalUnitsSold,
-      orderCount: totals.totalOrders,
-    };
-  }).sort((first, second) => second.revenue - first.revenue);
-}
-
-function calculateCustomerPerformance(rows) {
-  return Array.from(groupRowsBy(rows, (row) => row.customer), ([customer, customerRows]) => {
-    const totals = calculateTotals(customerRows);
-
-    return {
-      customer,
-      revenue: totals.totalRevenue,
-      unitsSold: totals.totalUnitsSold,
-      orderCount: totals.totalOrders,
-    };
-  }).sort((first, second) => second.revenue - first.revenue);
-}
-
-function calculatePromotionPerformance(rows) {
-  const groups = groupRowsBy(rows, (row) => row.promotion ?? NO_PROMOTION_LABEL);
-
-  return Array.from(groups, ([promotion, promotionRows]) => {
-    const totals = calculateTotals(promotionRows);
-
-    return {
-      promotion,
-      revenue: totals.totalRevenue,
+      margin: profitMargin,
       unitsSold: totals.totalUnitsSold,
       orderCount: totals.totalOrders,
     };
@@ -711,8 +734,8 @@ function calculateBestAndLowestSellingProducts(productPerformance) {
   );
 
   return {
-    bestSelling: productsByUnitsSold[0],
-    lowestSelling: productsByUnitsSold[productsByUnitsSold.length - 1],
+    bestSelling: { ...productsByUnitsSold[0], product: productsByUnitsSold[0].value },
+    lowestSelling: { ...productsByUnitsSold[productsByUnitsSold.length - 1], product: productsByUnitsSold[productsByUnitsSold.length - 1].value },
   };
 }
 
@@ -804,9 +827,13 @@ function buildReport(rows, { granularity, periodKey }) {
   const periodRows = rows.filter((row) => getPeriodKey(row.date, granularity) === periodKey);
   const totals = calculateTotals(periodRows);
   const profit = calculateProfit(totals.totalRevenue, totals.totalCost);
-  const productPerformance = calculateProductPerformance(periodRows);
-  const customerPerformance = calculateCustomerPerformance(periodRows);
-  const promotionPerformance = calculatePromotionPerformance(periodRows);
+  const breakdowns = Object.fromEntries(
+    DIMENSIONS.filter((dimension) => availableDimensionKeys.has(dimension.key))
+      .map((dimension) => [dimension.key, calculateBreakdown(periodRows, dimension.key)]),
+  );
+  const productPerformance = breakdowns.product;
+  const customerPerformance = breakdowns.customer;
+  const promotionPerformance = breakdowns.promotion;
   const { bestSelling, lowestSelling } = calculateBestAndLowestSellingProducts(productPerformance);
   const periodComparison = calculatePeriodComparison(rows, granularity, periodKey);
   const report = {
@@ -817,6 +844,7 @@ function buildReport(rows, { granularity, periodKey }) {
     productPerformance,
     customerPerformance,
     promotionPerformance,
+    breakdowns,
     bestSelling,
     lowestSelling,
     periodComparison,
@@ -907,31 +935,15 @@ function renderTruncatedSection(title, sectionKey, itemNoun, headers, items, ren
   return `<section class="report-section"><h3>${escapeHtml(title)}</h3>${renderTable(headers, visibleItems.map(renderRow).join(""))}${toggleButton}</section>`;
 }
 
-function renderProductTable(productPerformance) {
+function renderBreakdownSection(dimension, items) {
   return renderTruncatedSection(
-    "Product performance",
-    "products",
-    "products",
-    ["Product", "Revenue", "Cost", "Profit", "Units Sold", "Orders"],
-    productPerformance,
-    (product) => `<tr><td>${escapeHtml(product.product)}</td><td>${formatMoney(product.revenue)}</td><td>${formatMoney(product.cost)}</td><td>${formatMoney(product.profit)}</td><td>${product.unitsSold.toLocaleString()}</td><td>${product.orderCount.toLocaleString()}</td></tr>`,
+    `${dimension.label} performance`,
+    dimension.key,
+    dimension.noun,
+    [dimension.label, "Revenue", "Cost", "Profit", "Margin", "Units Sold", "Orders"],
+    items,
+    (item) => `<tr><td>${escapeHtml(item.value)}</td><td>${formatMoney(item.revenue)}</td><td>${formatMoney(item.cost)}</td><td>${formatMoney(item.profit)}</td><td>${formatPercent(item.margin)}</td><td>${item.unitsSold.toLocaleString()}</td><td>${item.orderCount.toLocaleString()}</td></tr>`,
   );
-}
-
-function renderCustomerTable(customerPerformance) {
-  return renderTruncatedSection(
-    "Customer performance",
-    "customers",
-    "customers",
-    ["Customer", "Revenue", "Units Sold", "Orders"],
-    customerPerformance,
-    (customer) => `<tr><td>${escapeHtml(customer.customer)}</td><td>${formatMoney(customer.revenue)}</td><td>${customer.unitsSold.toLocaleString()}</td><td>${customer.orderCount.toLocaleString()}</td></tr>`,
-  );
-}
-
-function renderPromotionSection(promotionPerformance) {
-  const rows = promotionPerformance.map((promotion) => `<tr><td>${escapeHtml(promotion.promotion)}</td><td>${formatMoney(promotion.revenue)}</td><td>${promotion.unitsSold.toLocaleString()}</td><td>${promotion.orderCount.toLocaleString()}</td></tr>`).join("");
-  return `<section class="report-section"><h3>Promotion performance</h3>${renderTable(["Promotion", "Revenue", "Units Sold", "Orders"], rows)}</section>`;
 }
 
 function renderAlerts(alerts) {
@@ -946,9 +958,9 @@ function renderReport(report) {
     renderAlerts(report.alerts),
     renderSummaryCards(report),
     renderPeriodComparison(report.periodComparison, report.granularity),
-    renderProductTable(report.productPerformance),
-    renderCustomerTable(report.customerPerformance),
-    renderPromotionSection(report.promotionPerformance),
+    ...DIMENSIONS.filter((dimension) => report.breakdowns[dimension.key]).map(
+      (dimension) => renderBreakdownSection(dimension, report.breakdowns[dimension.key]),
+    ),
   ].join("");
 }
 
@@ -1001,21 +1013,21 @@ function buildReportCsv(report) {
     comparisonRows,
   );
 
-  addSection(
-    "Product Performance",
-    ["Product", "Revenue", "Cost", "Profit", "Units Sold", "Orders"],
-    report.productPerformance.map((product) => [product.product, product.revenue, product.cost, product.profit, product.unitsSold, product.orderCount]),
-  );
-  addSection(
-    "Customer Performance",
-    ["Customer", "Revenue", "Units Sold", "Orders"],
-    report.customerPerformance.map((customer) => [customer.customer, customer.revenue, customer.unitsSold, customer.orderCount]),
-  );
-  addSection(
-    "Promotion Performance",
-    ["Promotion", "Revenue", "Units Sold", "Orders"],
-    report.promotionPerformance.map((promotion) => [promotion.promotion, promotion.revenue, promotion.unitsSold, promotion.orderCount]),
-  );
+  DIMENSIONS.filter((dimension) => report.breakdowns[dimension.key]).forEach((dimension) => {
+    addSection(
+      `${dimension.label} Performance`,
+      [dimension.label, "Revenue", "Cost", "Profit", "Margin (%)", "Units Sold", "Orders"],
+      report.breakdowns[dimension.key].map((item) => [
+        item.value,
+        item.revenue,
+        item.cost,
+        item.profit,
+        item.margin,
+        item.unitsSold,
+        item.orderCount,
+      ]),
+    );
+  });
   addSection(
     "Alerts",
     ["Severity", "Message"],

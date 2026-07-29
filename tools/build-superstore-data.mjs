@@ -2,7 +2,7 @@ import fs from "node:fs";
 
 const inputPath = new URL("../Superstore.csv", import.meta.url);
 const outputPath = new URL("../superstore-data.js", import.meta.url);
-const columns = ["Order Date", "Order ID", "Customer Name", "Product Name", "Quantity", "Sales", "Profit", "Discount"];
+const columns = ["Order Date", "Order ID", "Customer Name", "Product Name", "Quantity", "Sales", "Profit", "Discount", "Category", "Sub-Category", "Region", "State", "City", "Segment", "Ship Mode", "Ship Date"];
 
 function parseCsv(text) {
   const rows = [];
@@ -34,7 +34,12 @@ const headers = parsed.shift();
 const indexes = columns.map((column) => headers.indexOf(column));
 if (indexes.some((index) => index === -1)) throw new Error("Expected Superstore columns were not found.");
 const rows = parsed.filter((row) => row.length > 1).map((row) => indexes.map((index) => row[index] ?? ""));
-rows.forEach((row) => { row[0] = normalizeDate(row[0]); });
-console.log(`Detected M/D/YYYY dates; converting ${rows.length} rows.`);
+const orderDateIndex = columns.indexOf("Order Date");
+const shipDateIndex = columns.indexOf("Ship Date");
+rows.forEach((row) => {
+  row[orderDateIndex] = normalizeDate(row[orderDateIndex]);
+  row[shipDateIndex] = normalizeDate(row[shipDateIndex]);
+});
+console.log(`Converting asserted M/D/YYYY dates for ${rows.length} rows.`);
 fs.writeFileSync(outputPath, `window.SUPERSTORE_DATA = ${JSON.stringify({ headers: columns, rows })};\n`, "utf8");
 console.log(`Wrote ${new URL(outputPath).pathname}`);
