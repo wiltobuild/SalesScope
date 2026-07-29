@@ -68,6 +68,15 @@ DIMENSIONS.filter((dimension) => !dimension.required).forEach((dimension) => {
 });
 const NO_PROMOTION_LABEL = "No promotion";
 const TOP_ROW_COUNT = 10;
+const DEFAULT_COLLAPSED_REPORT_SECTIONS = new Set([
+  "category",
+  "subCategory",
+  "region",
+  "state",
+  "city",
+  "segment",
+  "shipMode",
+]);
 // Kaggle serves this dataset with Access-Control-Allow-Origin: *, so the browser can
 // call it directly - no backend, no proxy, and no API key.
 const KAGGLE_DATASET_URL =
@@ -364,6 +373,10 @@ function ingestRows({ rawRows, headers }, sourceLabel) {
   currentReport = null;
   selectedPeriodKey = null;
   expandedSections.clear();
+  collapsedReportSections.clear();
+  DEFAULT_COLLAPSED_REPORT_SECTIONS.forEach((section) => {
+    collapsedReportSections.add(section);
+  });
   tableSorts.clear();
   tableSearches.clear();
   focusFilters.clear();
@@ -1524,12 +1537,30 @@ function renderCustomerIntelligence(intelligence) {
   return renderReportSection("customer-intelligence", "Customer intelligence", `${concentration}<div class="intelligence-tables"><div><h4>At-risk customers</h4><p class="summary-card-detail">Top previous-period customers who did not order this period.</p>${renderTable(["Customer", "Previous Revenue", "Previous Orders"], atRiskRows)}</div><div><h4>Unprofitable customers (${intelligence.unprofitable.length.toLocaleString()})</h4>${renderTable(["Customer", "Profit", "Revenue"], unprofitableRows)}</div></div>`);
 }
 
+function renderRevenueOverTimeTable(report) {
+  const sectionKey = "revenue-over-time";
+  const isExpanded = expandedSections.has(sectionKey);
+  const periods = report.revenueByPeriod;
+  const visiblePeriods = isExpanded ? periods : periods.slice(-12);
+  const toggleLabel = isExpanded
+    ? "Show recent 12 periods"
+    : `Show all ${periods.length.toLocaleString()} periods`;
+  const toggleButton = periods.length > 12
+    ? `<button type="button" class="table-toggle" data-section="${escapeHtml(sectionKey)}">${escapeHtml(toggleLabel)}</button>`
+    : "";
+  const rows = visiblePeriods.map((point) => (
+    `<tr><td>${escapeHtml(formatPeriodLabel(point.key, report.granularity))}</td><td>${escapeHtml(formatMoney(point.revenue))}</td></tr>`
+  )).join("");
+
+  return `${renderTable(["Period", "Revenue"], rows)}${toggleButton}`;
+}
+
 function renderReport(report) {
   return [
     renderAlerts(report.alerts),
     renderSummaryCards(report),
     renderCustomerIntelligence(report.customerIntelligence),
-    renderReportSection("revenue-over-time", "Revenue over time", `${renderRevenueOverTimeChart(report)}${renderTable(["Period", "Revenue"], report.revenueByPeriod.map((point) => `<tr><td>${escapeHtml(formatPeriodLabel(point.key, report.granularity))}</td><td>${formatMoney(point.revenue)}</td></tr>`).join(""))}`),
+    renderReportSection("revenue-over-time", "Revenue over time", `${renderRevenueOverTimeChart(report)}${renderRevenueOverTimeTable(report)}`),
     renderPeriodComparison(report.periodComparison, report.granularity),
     ...DIMENSIONS.filter((dimension) => report.breakdowns[dimension.key]).map(
       (dimension) => renderBreakdownSection(dimension, report.breakdowns[dimension.key]),
