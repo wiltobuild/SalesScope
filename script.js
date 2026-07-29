@@ -800,9 +800,12 @@ function handleChartPointerMove(event) {
   ));
   const period = currentReport.revenueByPeriod[index];
   const x = 58 + (index / Math.max(currentReport.revenueByPeriod.length - 1, 1)) * 622;
+  const minimum = Math.min(...currentReport.revenueByPeriod.map((item) => item.revenue));
   const maximum = Math.max(...currentReport.revenueByPeriod.map((item) => item.revenue), 1);
-  const axisMaximum = niceChartTickSize(maximum / 3) * Math.ceil(maximum / niceChartTickSize(maximum / 3));
-  const y = 22 + 175 - (period.revenue / axisMaximum) * 175;
+  const tickSize = niceChartTickSize(Math.max(maximum, Math.abs(minimum)) / 3);
+  const axisMinimum = minimum < 0 ? tickSize * Math.floor(minimum / tickSize) : 0;
+  const axisMaximum = tickSize * Math.ceil(maximum / tickSize);
+  const y = 22 + 175 - ((period.revenue - axisMinimum) / (axisMaximum - axisMinimum)) * 175;
   const crosshair = chart.querySelector(".chart-crosshair");
   const tooltip = chart.querySelector(".chart-tooltip");
 
@@ -1208,12 +1211,14 @@ function formatMoney(value) {
 
 function formatCompactMoney(value) {
   const amount = Math.round(Number(value));
+  const sign = amount < 0 ? "-" : "";
+  const absoluteAmount = Math.abs(amount);
 
-  if (Math.abs(amount) >= 1000) {
-    return `$${Math.round(amount / 1000)}k`;
+  if (absoluteAmount >= 1000) {
+    return `${sign}$${Math.round(absoluteAmount / 1000)}k`;
   }
 
-  return `$${amount}`;
+  return `${sign}$${absoluteAmount}`;
 }
 
 function niceChartTickSize(value) {
@@ -1412,16 +1417,19 @@ function renderDiscountMarginChart(items) {
 
 function renderRevenueOverTimeChart(report) {
   const points = report.revenueByPeriod;
+  const minimum = Math.min(...points.map((point) => point.revenue));
   const maximum = Math.max(...points.map((point) => point.revenue), 1);
-  const tickSize = niceChartTickSize(maximum / 3);
+  const tickSize = niceChartTickSize(Math.max(maximum, Math.abs(minimum)) / 3);
+  const axisMinimum = minimum < 0 ? tickSize * Math.floor(minimum / tickSize) : 0;
   const axisMaximum = tickSize * Math.ceil(maximum / tickSize);
+  const axisRange = axisMaximum - axisMinimum;
   const left = 58;
   const top = 22;
   const width = 622;
   const height = 175;
   const pointMarkup = points.map((point, index) => {
     const x = left + (index / Math.max(points.length - 1, 1)) * width;
-    const y = top + height - (point.revenue / axisMaximum) * height;
+    const y = top + height - ((point.revenue - axisMinimum) / axisRange) * height;
     return { ...point, x, y };
   });
   const selected = pointMarkup.find((point) => point.key === report.periodKey);
@@ -1431,13 +1439,27 @@ function renderRevenueOverTimeChart(report) {
     return `<circle cx="${point.x}" cy="${point.y}" r="2.5" fill="#2a78d6"><title>${escapeHtml(label)}</title></circle>`;
   }).join("");
   const selectedMarkup = selected ? `<circle cx="${selected.x}" cy="${selected.y}" r="5" fill="#2a78d6"></circle><text x="${Math.min(selected.x + 9, 600)}" y="${selected.y - 9}" class="chart-value">${escapeHtml(formatMoney(selected.revenue))}</text>` : "";
-  const labels = pointMarkup.filter((point, index) => index === 0 || index === pointMarkup.length - 1 || index % Math.ceil(pointMarkup.length / 6) === 0).map((point, index, selectedPoints) => `<text x="${point.x}" y="220" text-anchor="${index === selectedPoints.length - 1 ? "end" : "middle"}" class="chart-label">${escapeHtml(formatPeriodLabel(point.key, report.granularity))}</text>`).join("");
-  const yTicks = Array.from({ length: 4 }, (_, index) => {
-    const value = axisMaximum * (index / 3);
-    const y = top + height - (value / axisMaximum) * height;
+  // The final label is anchored at its right edge while the others are centred, so the
+  // clearance needed is the whole final label plus half of the one before it. Comparing
+  // against the final width alone leaves them overlapping by that missing half.
+  const estimateLabelWidth = (point) => formatPeriodLabel(point.key, report.granularity).length * 6;
+  const labelPoints = pointMarkup.filter((point, index) => index === 0 || index === pointMarkup.length - 1 || index % Math.ceil(pointMarkup.length / 6) === 0).filter((point, index, selectedPoints) => {
+    if (index !== selectedPoints.length - 2) {
+      return true;
+    }
+
+    const finalPoint = selectedPoints[selectedPoints.length - 1];
+    const requiredGap = estimateLabelWidth(finalPoint) + estimateLabelWidth(point) / 2 + 8;
+    return finalPoint.x - point.x >= requiredGap;
+  });
+  const labels = labelPoints.map((point, index) => `<text x="${point.x}" y="220" text-anchor="${index === labelPoints.length - 1 ? "end" : "middle"}" class="chart-label">${escapeHtml(formatPeriodLabel(point.key, report.granularity))}</text>`).join("");
+  const yTicks = Array.from({ length: Math.round(axisRange / tickSize) + 1 }, (_, index) => {
+    const value = axisMinimum + tickSize * index;
+    const y = top + height - ((value - axisMinimum) / axisRange) * height;
     return `<line x1="${left}" y1="${y}" x2="${left + width}" y2="${y}" class="chart-grid"></line><text x="${left - 8}" y="${y + 4}" text-anchor="end" class="chart-label">${escapeHtml(formatCompactMoney(value))}</text>`;
   }).join("");
-  const axes = `${yTicks}<line x1="${left}" y1="${top + height}" x2="${left + width}" y2="${top + height}" class="chart-axis"></line>`;
+  const zeroLine = minimum < 0 && maximum > 0 ? `<line x1="${left}" y1="${top + height - ((0 - axisMinimum) / axisRange) * height}" x2="${left + width}" y2="${top + height - ((0 - axisMinimum) / axisRange) * height}" class="chart-zero"></line>` : "";
+  const axes = `${yTicks}${zeroLine}<line x1="${left}" y1="${top + height}" x2="${left + width}" y2="${top + height}" class="chart-axis"></line>`;
   const chartLine = `<path d="${path}" fill="none" stroke="#2a78d6" stroke-width="2"></path>`;
   const hoverMarkup = '<line y1="22" y2="197" class="chart-crosshair" hidden></line><text class="chart-tooltip" hidden></text>';
 
