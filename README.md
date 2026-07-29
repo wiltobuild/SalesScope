@@ -1,8 +1,10 @@
 # SalesScope
 
-SalesScope lets sales coordinators upload sales data and get a scoped week or month report: totals and profit, period comparison, product/customer/promotion performance, and alerts for declines or low margin.
+SalesScope lets sales coordinators upload sales data and get a scoped week or month report: totals and profit, period and year-over-year comparison, performance breakdowns, customer intelligence, charts, and actionable alerts.
 
 Required columns: `Date`, `Order ID`, `Customer`, `Product`, `Quantity`, and `Revenue`, plus either `Cost` or `Profit` (`Cost = Revenue − Profit`). `Promotion` may be blank; when it is absent, `Discount` is converted to discount bands.
+
+When available, SalesScope also uses `Category`, `Sub-Category`, `Region`, `State`, `City`, `Segment`, `Ship Mode`, and `Ship Date`. These are optional, so generic uploads such as `sample-sales-data.csv` continue to work without empty sections. `Ship Date` enables delivery-day metrics; the bundled Superstore data includes all of these dimensions.
 
 ## Run locally
 
@@ -12,7 +14,9 @@ Open `index.html` in a web browser. There are three ways to get data in:
 - **Load Superstore Data** - the bundled Kaggle Superstore dataset (9,994 rows, 2014–2017), read instantly from `superstore-data.js`. Works offline.
 - **Fetch Live from Kaggle API** - calls the Kaggle dataset API over HTTPS at runtime, unzips and parses the response in the browser, then loads it. Needs an internet connection.
 
-The period controls default to the latest month and switch between month and week without re-uploading. Product and customer tables show the top 10 by revenue and can expand; downloads always include all rows.
+The period controls default to the latest month and switch between month and week without re-uploading. The report includes product, customer, promotion, and any available optional-dimension breakdowns. Tables start with the top 10 by revenue, can expand, and can be sorted by their columns; product and customer tables also have name search. Downloads always include all rows and sections.
+
+Click a breakdown row to focus the full report on that value; focus chips can be removed, and period changes or Reset clear them. Report sections are collapsible (expanded by default), with a Collapse all / Expand all control. Charts are likewise shown by default and can be hidden for a compact text-only brief.
 
 ## Data source
 
@@ -31,6 +35,20 @@ If the fetch fails - offline, Kaggle down, CORS policy changed - the app says so
 
 Note the dataset itself is static: it is a fixed historical extract, so a live fetch returns the same 9,994 rows each time. The live path demonstrates the integration, not changing data.
 
+## Report and alerts
+
+The comparison section shows both the prior period and the same period last year when that data exists. Revenue-decline alerts use the year-over-year baseline in preference to period-over-period, avoiding false seasonal alarms.
+
+Alerts cover revenue decline, low margin, skipped invalid rows, discount drag at 30% or more, below-cost products, churn among prior-period top customers, and customer-concentration risk. The fulfilment alert is deliberately limited to Same Day orders that take more than zero delivery days: the dataset has no meaningful late-delivery tail for the other ship modes, so alerting against their averages would mostly create noise. Instead, the Ship Mode breakdown reports average and maximum delivery days.
+
+Customer intelligence shows the revenue held by the top 10%, 20%, and 50% of customers, at-risk customers who ordered in the prior period but not the current one, and unprofitable customers.
+
+## Charts
+
+Charts are hand-rolled inline SVG and stay next to the tables that contain the same values. The three chart forms are a discount-versus-margin diverging bar chart, an interactive revenue-over-time line chart with the selected period emphasized, and horizontal bars for each breakdown. Breakdown charts use a sequential revenue ramp or positive/negative profit bars as appropriate.
+
+The palette is validated for the report surface: categorical data uses blue, orange, aqua, then yellow; profit uses blue for positive and red for negative. Brand green (`#34734a`) is intentionally reserved for UI chrome, not data marks, because it does not meet the validated chart-colour rule.
+
 ## How it works
 
 - `index.html` / `style.css` - page structure and the design system.
@@ -44,4 +62,8 @@ No backend, framework, or build step - just static files and SheetJS via CDN.
 
 ## Scope
 
-This is an MVP. Deliberately out of scope for now: accounts, cloud storage/persistence, manager dashboards, charts, forecasting, and sharing integrations.
+The MVP shipped a weekly report over uploaded data. Since then the app gained the full Superstore dimension set, year-over-year comparison, charts, drill-down and customer intelligence, so it is no longer an MVP - charts and live data connections have both moved from "out of scope" to shipped.
+
+Still deliberately out of scope: accounts, cloud storage/persistence, manager dashboards, forecasting, and sharing integrations.
+
+One known limitation worth stating plainly: the bundled dataset is a fixed historical extract covering 2014-2017. The API integration is real, but the data behind it does not change.
