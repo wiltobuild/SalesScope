@@ -82,6 +82,8 @@ let selectedPeriodKey = null;
 let availableDimensionKeys = new Set();
 const expandedSections = new Set();
 const collapsedReportSections = new Set();
+// Charts start visible; this set deliberately records only charts the reader hid.
+const collapsedCharts = new Set();
 
 salesFileInput.addEventListener("change", handleFileInputChange);
 loadSuperstoreButton.addEventListener("click", loadSuperstoreData);
@@ -95,6 +97,8 @@ toggleAllSectionsButton.addEventListener("click", toggleAllReportSections);
 // The report HTML is replaced wholesale on every render, so per-button listeners would
 // not survive. One delegated listener on the container does.
 reportOutput.addEventListener("click", handleReportOutputClick);
+reportOutput.addEventListener("pointermove", handleChartPointerMove);
+reportOutput.addEventListener("pointerleave", hideChartCrosshair);
 
 function resetApp() {
   salesFileInput.value = "";
@@ -106,6 +110,7 @@ function resetApp() {
   availableDimensionKeys.clear();
   expandedSections.clear();
   collapsedReportSections.clear();
+  collapsedCharts.clear();
   clearSelectedFile();
   clearUploadError();
   setApiStatus("");
@@ -653,6 +658,21 @@ function handlePeriodChange() {
 }
 
 function handleReportOutputClick(event) {
+  const chartToggle = event.target.closest("[data-chart]");
+
+  if (chartToggle && currentReport) {
+    const chart = chartToggle.dataset.chart;
+
+    if (collapsedCharts.has(chart)) {
+      collapsedCharts.delete(chart);
+    } else {
+      collapsedCharts.add(chart);
+    }
+
+    reportOutput.innerHTML = renderReport(currentReport);
+    return;
+  }
+
   const reportSectionToggle = event.target.closest("[data-report-section]");
 
   if (reportSectionToggle && currentReport) {
@@ -686,10 +706,49 @@ function handleReportOutputClick(event) {
   reportOutput.innerHTML = renderReport(currentReport);
 }
 
+function handleChartPointerMove(event) {
+  const chart = event.target.closest("[data-revenue-chart]");
+
+  if (!chart || !currentReport) {
+    hideChartCrosshair();
+    return;
+  }
+
+  const svg = chart.ownerSVGElement;
+  const point = svg.createSVGPoint();
+  point.x = event.clientX;
+  point.y = event.clientY;
+  const location = point.matrixTransform(svg.getScreenCTM().inverse());
+  const index = Math.max(0, Math.min(
+    currentReport.revenueByPeriod.length - 1,
+    Math.round(((location.x - 42) / 645) * (currentReport.revenueByPeriod.length - 1)),
+  ));
+  const period = currentReport.revenueByPeriod[index];
+  const x = 42 + (index / Math.max(currentReport.revenueByPeriod.length - 1, 1)) * 645;
+  const y = 22 + 175 - (period.revenue / Math.max(...currentReport.revenueByPeriod.map((item) => item.revenue), 1)) * 175;
+  const crosshair = chart.querySelector(".chart-crosshair");
+  const tooltip = chart.querySelector(".chart-tooltip");
+
+  crosshair.setAttribute("x1", x);
+  crosshair.setAttribute("x2", x);
+  crosshair.hidden = false;
+  tooltip.setAttribute("x", Math.min(x + 8, 530));
+  tooltip.setAttribute("y", Math.max(y - 12, 18));
+  tooltip.textContent = `${formatPeriodLabel(period.key, currentReport.granularity)}: ${formatMoney(period.revenue)}`;
+  tooltip.hidden = false;
+}
+
+function hideChartCrosshair() {
+  reportOutput.querySelectorAll(".chart-crosshair, .chart-tooltip").forEach((element) => {
+    element.hidden = true;
+  });
+}
+
 function getReportSectionKeys(report) {
   return [
     "alerts",
     "summary",
+    "revenue-over-time",
     "comparison",
     ...DIMENSIONS.filter((dimension) => report.breakdowns[dimension.key]).map(
       (dimension) => dimension.key,
@@ -1006,6 +1065,10 @@ function buildReport(rows, { granularity, periodKey }) {
   const promotionPerformance = breakdowns.promotion;
   const { bestSelling, biggestLossMaker } = calculateBestSellingAndBiggestLossMaker(productPerformance);
   const periodComparison = calculatePeriodComparison(rows, granularity, periodKey);
+  const revenueByPeriod = Array.from(groupRowsByPeriod(rows, granularity), ([key, periodRows]) => ({
+    key,
+    revenue: calculateTotals(periodRows).totalRevenue,
+  })).sort((first, second) => first.key.localeCompare(second.key));
   const report = {
     granularity,
     periodKey,
@@ -1020,6 +1083,7 @@ function buildReport(rows, { granularity, periodKey }) {
     periodComparison,
     rows: periodRows,
     rowsByPeriod: groupRowsByPeriod(rows, granularity),
+    revenueByPeriod,
   };
 
   return { ...report, alerts: calculateAlerts(report) };
@@ -1116,6 +1180,108 @@ function renderTruncatedSection(title, sectionKey, itemNoun, headers, items, ren
   return renderReportSection(sectionKey, title, `${renderTable(headers, visibleItems.map(renderRow).join(""))}${toggleButton}`);
 }
 
+function renderChart(chartKey, title, description, svg, height = 260) {
+  const isCollapsed = collapsedCharts.has(chartKey);
+  const toggleLabel = isCollapsed ? `Show ${title}` : `Hide ${title}`;
+
+  const content = isCollapsed
+    ? ""
+    : `<figure class="chart-figure"><svg class="report-chart" viewBox="0 0 720 ${height}" role="img" aria-label="${escapeHtml(description)}"><title>${escapeHtml(description)}</title>${svg}</svg></figure>`;
+
+  return `<div class="chart-wrap ${isCollapsed ? "is-collapsed" : ""}"><div class="chart-heading"><h4>${escapeHtml(title)}</h4><button type="button" class="chart-toggle" data-chart="${escapeHtml(chartKey)}" aria-expanded="${String(!isCollapsed)}">${escapeHtml(toggleLabel)}</button></div>${content}</div>`;
+}
+
+function chartLabel(value, length = 22) {
+  const label = String(value);
+  return escapeHtml(label.length > length ? `${label.slice(0, length - 1)}…` : label);
+}
+
+function renderDiscountMarginChart(items) {
+  const bands = [...items].sort((first, second) => (
+    Number.parseFloat(first.value) - Number.parseFloat(second.value)
+  ));
+  const maximum = Math.max(10, ...bands.map((item) => Math.abs(item.margin)));
+  const zeroX = 315;
+  const scale = 330 / maximum;
+  const rows = bands.map((item, index) => {
+    const y = 28 + index * 24;
+    const width = Math.abs(item.margin) * scale;
+    const x = item.margin < 0 ? zeroX - width : zeroX;
+    const labelX = item.margin < 0 ? x - 7 : x + width + 7;
+    const anchor = item.margin < 0 ? "end" : "start";
+    const percent = `${Number.parseFloat(item.value).toFixed(0)}%`;
+    const bar = `<rect x="${x}" y="${y - 8}" width="${width}" height="16" rx="4" fill="${item.margin < 0 ? "#e34948" : "#2a78d6"}"></rect>`;
+    return `<text x="8" y="${y + 5}" class="chart-label">${escapeHtml(percent)}</text>${bar}<text x="${labelX}" y="${y + 5}" text-anchor="${anchor}" class="chart-value">${escapeHtml(formatPercent(item.margin))}</text>`;
+  }).join("");
+  const height = Math.max(260, bands.length * 24 + 40);
+
+  return renderChart(
+    "discount-margin",
+    "Discount vs margin",
+    "Margin by discount band, showing positive margin in blue and negative margin in red.",
+    `<line x1="${zeroX}" y1="12" x2="${zeroX}" y2="${height - 12}" class="chart-zero"></line>${rows}`,
+    height,
+  );
+}
+
+function renderRevenueOverTimeChart(report) {
+  const points = report.revenueByPeriod;
+  const maximum = Math.max(...points.map((point) => point.revenue), 1);
+  const left = 42;
+  const top = 22;
+  const width = 645;
+  const height = 175;
+  const pointMarkup = points.map((point, index) => {
+    const x = left + (index / Math.max(points.length - 1, 1)) * width;
+    const y = top + height - (point.revenue / maximum) * height;
+    return { ...point, x, y };
+  });
+  const selected = pointMarkup.find((point) => point.key === report.periodKey);
+  const path = pointMarkup.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
+  const dots = pointMarkup.map((point) => {
+    const label = `${formatPeriodLabel(point.key, report.granularity)}: ${formatMoney(point.revenue)}`;
+    return `<circle cx="${point.x}" cy="${point.y}" r="2.5" fill="#2a78d6"><title>${escapeHtml(label)}</title></circle>`;
+  }).join("");
+  const selectedMarkup = selected ? `<circle cx="${selected.x}" cy="${selected.y}" r="5" fill="#2a78d6"></circle><text x="${Math.min(selected.x + 9, 600)}" y="${selected.y - 9}" class="chart-value">${escapeHtml(formatMoney(selected.revenue))}</text>` : "";
+  const labels = pointMarkup.filter((point, index) => index === 0 || index === pointMarkup.length - 1 || index % Math.ceil(pointMarkup.length / 6) === 0).map((point) => `<text x="${point.x}" y="220" text-anchor="middle" class="chart-label">${escapeHtml(formatPeriodLabel(point.key, report.granularity))}</text>`).join("");
+  const axes = `<line x1="${left}" y1="${top + height}" x2="${left + width}" y2="${top + height}" class="chart-axis"></line><line x1="${left}" y1="${top + height / 2}" x2="${left + width}" y2="${top + height / 2}" class="chart-grid"></line>`;
+  const chartLine = `<path d="${path}" fill="none" stroke="#2a78d6" stroke-width="2"></path>`;
+  const hoverMarkup = '<line y1="22" y2="197" class="chart-crosshair" hidden></line><text class="chart-tooltip" hidden></text>';
+
+  return renderChart(
+    "revenue-over-time",
+    "Revenue over time",
+    "Revenue over every available period, with the selected period highlighted.",
+    `<g data-revenue-chart>${axes}${chartLine}${dots}${hoverMarkup}${selectedMarkup}${labels}</g>`,
+  );
+}
+
+function renderBreakdownChart(dimension, items) {
+  const visible = items.slice(0, TOP_ROW_COUNT);
+  const metric = visible.some((item) => item.profit < 0) ? "profit" : "revenue";
+  const maximum = Math.max(1, ...visible.map((item) => Math.abs(item[metric])));
+  const baseline = metric === "profit" ? 310 : 180;
+  const scale = (metric === "profit" ? 280 : 410) / maximum;
+  const colors = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#2a78d6", "#256abf", "#184f95"];
+  const bars = visible.map((item, index) => {
+    const y = 27 + index * 25;
+    const value = item[metric];
+    const barWidth = Math.abs(value) * scale;
+    const x = value < 0 ? baseline - barWidth : baseline;
+    const fill = metric === "profit" ? (value < 0 ? "#e34948" : "#2a78d6") : colors[Math.round((index / Math.max(visible.length - 1, 1)) * (colors.length - 1))];
+    return `<text x="8" y="${y + 5}" class="chart-label">${chartLabel(item.value)}</text><rect x="${x}" y="${y - 8}" width="${barWidth}" height="16" rx="4" fill="${fill}"></rect><text x="${value < 0 ? x - 6 : x + barWidth + 6}" y="${y + 5}" text-anchor="${value < 0 ? "end" : "start"}" class="chart-value">${escapeHtml(formatMoney(value))}</text>`;
+  }).join("");
+  const zeroLine = metric === "profit" ? `<line x1="${baseline}" y1="12" x2="${baseline}" y2="${visible.length * 25 + 20}" class="chart-zero"></line>` : "";
+  const title = `${dimension.label} ${metric}`;
+
+  return renderChart(
+    `breakdown-${dimension.key}`,
+    title,
+    `Top ${Math.min(TOP_ROW_COUNT, visible.length)} ${dimension.noun} by revenue, shown as ${metric}.`,
+    `${zeroLine}${bars}`,
+  );
+}
+
 function renderBreakdownSection(dimension, items) {
   const isShipMode = dimension.key === "shipMode";
   const headers = [dimension.label, "Revenue", "Cost", "Profit", "Margin", "Units Sold", "Orders"];
@@ -1124,7 +1290,7 @@ function renderBreakdownSection(dimension, items) {
     headers.push("Average Delivery Days", "Maximum Delivery Days");
   }
 
-  return renderTruncatedSection(
+  const table = renderTruncatedSection(
     `${dimension.label} performance`,
     dimension.key,
     dimension.noun,
@@ -1137,6 +1303,14 @@ function renderBreakdownSection(dimension, items) {
       return `<tr><td>${escapeHtml(item.value)}</td><td>${formatMoney(item.revenue)}</td><td>${formatMoney(item.cost)}</td><td>${formatMoney(item.profit)}</td><td>${formatPercent(item.margin)}</td><td>${item.unitsSold.toLocaleString()}</td><td>${item.orderCount.toLocaleString()}</td>${deliveryDays}</tr>`;
     },
   );
+  const hasDiscountBands = items.length > 0 && items.every(
+    (item) => Number.isFinite(Number.parseFloat(item.value)),
+  );
+  const chart = dimension.key === "promotion" && hasDiscountBands
+    ? renderDiscountMarginChart(items)
+    : renderBreakdownChart(dimension, items);
+
+  return table.replace('<div class="table-wrap">', `${chart}<div class="table-wrap">`);
 }
 
 function renderAlerts(alerts) {
@@ -1150,6 +1324,7 @@ function renderReport(report) {
   return [
     renderAlerts(report.alerts),
     renderSummaryCards(report),
+    renderReportSection("revenue-over-time", "Revenue over time", `${renderRevenueOverTimeChart(report)}${renderTable(["Period", "Revenue"], report.revenueByPeriod.map((point) => `<tr><td>${escapeHtml(formatPeriodLabel(point.key, report.granularity))}</td><td>${formatMoney(point.revenue)}</td></tr>`).join(""))}`),
     renderPeriodComparison(report.periodComparison, report.granularity),
     ...DIMENSIONS.filter((dimension) => report.breakdowns[dimension.key]).map(
       (dimension) => renderBreakdownSection(dimension, report.breakdowns[dimension.key]),
