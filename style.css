@@ -274,9 +274,43 @@ h1 {
   margin-top: 1.5rem;
 }
 
+.report-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.8rem;
+}
+
 .report-section h3 {
-  margin: 0 0 0.8rem;
+  margin: 0;
   font-size: 1rem;
+}
+
+.report-section-toggle {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border: 1px solid #dce5dd;
+  border-radius: 7px;
+  color: #285f3b;
+  background: #ffffff;
+  cursor: pointer;
+  font: inherit;
+}
+
+.report-section-toggle:hover {
+  background: #eef5ef;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 
 .summary-grid {
@@ -320,6 +354,9 @@ h1 {
   gap: 0.75rem;
 }
 
+.comparison-pairs { display: grid; gap: 1rem; }
+.comparison-half h4 { margin: 0 0 0.55rem; color: #526058; font-size: 0.9rem; }
+
 .comparison-card {
   padding: 0.85rem;
   border: 1px solid #dce5dd;
@@ -346,6 +383,7 @@ h1 {
 .report-controls { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1rem 0; }
 .report-controls label { display: grid; gap: 0.35rem; color: #526058; font-weight: 700; }
 .report-controls select { min-width: 12rem; padding: 0.55rem; border: 1px solid #dce5dd; border-radius: 0.4rem; font: inherit; }
+.report-controls button { align-self: end; padding: 0.55rem 0.8rem; border: 1px solid #34734a; border-radius: 0.4rem; color: #285f3b; background: #ffffff; cursor: pointer; font: inherit; font-weight: 700; }
 .table-toggle { margin-top: 0.75rem; }
 
 @media (max-width: 560px) {

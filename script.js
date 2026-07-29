@@ -13,6 +13,7 @@ const reportHeadingHint = document.querySelector("#report-heading-hint");
 const reportControls = document.querySelector("#report-controls");
 const granularitySelect = document.querySelector("#granularity-select");
 const periodSelect = document.querySelector("#period-select");
+const toggleAllSectionsButton = document.querySelector("#toggle-all-sections-button");
 const initialReportHeadingHint = reportHeadingHint.textContent;
 const expectedColumns = [
   "Date",
@@ -80,6 +81,7 @@ let selectedGranularity = "month";
 let selectedPeriodKey = null;
 let availableDimensionKeys = new Set();
 const expandedSections = new Set();
+const collapsedReportSections = new Set();
 
 salesFileInput.addEventListener("change", handleFileInputChange);
 loadSuperstoreButton.addEventListener("click", loadSuperstoreData);
@@ -89,6 +91,7 @@ downloadReportButton.addEventListener("click", downloadCurrentReport);
 document.querySelector("#reset-button").addEventListener("click", resetApp);
 granularitySelect.addEventListener("change", handleGranularityChange);
 periodSelect.addEventListener("change", handlePeriodChange);
+toggleAllSectionsButton.addEventListener("click", toggleAllReportSections);
 // The report HTML is replaced wholesale on every render, so per-button listeners would
 // not survive. One delegated listener on the container does.
 reportOutput.addEventListener("click", handleReportOutputClick);
@@ -102,6 +105,7 @@ function resetApp() {
   selectedPeriodKey = null;
   availableDimensionKeys.clear();
   expandedSections.clear();
+  collapsedReportSections.clear();
   clearSelectedFile();
   clearUploadError();
   setApiStatus("");
@@ -109,6 +113,7 @@ function resetApp() {
   reportOutput.innerHTML = "";
   downloadReportButton.hidden = true;
   reportControls.hidden = true;
+  toggleAllSectionsButton.textContent = "Collapse all";
   granularitySelect.value = "month";
   periodSelect.innerHTML = "";
   reportHeadingHint.textContent = initialReportHeadingHint;
@@ -316,6 +321,9 @@ function coerceRow(rawRow, headerMap) {
     revenue,
     cost,
     promotion: promotionValue || null,
+    discountPercent: headerMap.has("Discount") && parseNumber(valueFor("Discount")) !== null
+      ? (parseNumber(valueFor("Discount")) > 1 ? parseNumber(valueFor("Discount")) : parseNumber(valueFor("Discount")) * 100)
+      : null,
     isLoss: profit !== null ? profit < 0 : revenue - cost < 0,
   };
 
@@ -645,6 +653,22 @@ function handlePeriodChange() {
 }
 
 function handleReportOutputClick(event) {
+  const reportSectionToggle = event.target.closest("[data-report-section]");
+
+  if (reportSectionToggle && currentReport) {
+    const section = reportSectionToggle.dataset.reportSection;
+
+    if (collapsedReportSections.has(section)) {
+      collapsedReportSections.delete(section);
+    } else {
+      collapsedReportSections.add(section);
+    }
+
+    updateSectionToggleLabel();
+    reportOutput.innerHTML = renderReport(currentReport);
+    return;
+  }
+
   const toggleButton = event.target.closest("[data-section]");
 
   if (!toggleButton || !currentReport) {
@@ -659,6 +683,47 @@ function handleReportOutputClick(event) {
     expandedSections.add(section);
   }
 
+  reportOutput.innerHTML = renderReport(currentReport);
+}
+
+function getReportSectionKeys(report) {
+  return [
+    "alerts",
+    "summary",
+    "comparison",
+    ...DIMENSIONS.filter((dimension) => report.breakdowns[dimension.key]).map(
+      (dimension) => dimension.key,
+    ),
+  ];
+}
+
+function updateSectionToggleLabel() {
+  if (!currentReport) {
+    return;
+  }
+
+  const sectionKeys = getReportSectionKeys(currentReport);
+  const allCollapsed = sectionKeys.length > 0 && sectionKeys.every(
+    (section) => collapsedReportSections.has(section),
+  );
+  toggleAllSectionsButton.textContent = allCollapsed ? "Expand all" : "Collapse all";
+}
+
+function toggleAllReportSections() {
+  if (!currentReport) {
+    return;
+  }
+
+  const sectionKeys = getReportSectionKeys(currentReport);
+  const allCollapsed = sectionKeys.every((section) => collapsedReportSections.has(section));
+
+  if (allCollapsed) {
+    collapsedReportSections.clear();
+  } else {
+    sectionKeys.forEach((section) => collapsedReportSections.add(section));
+  }
+
+  updateSectionToggleLabel();
   reportOutput.innerHTML = renderReport(currentReport);
 }
 
@@ -711,6 +776,9 @@ function calculateBreakdown(rows, dimensionKey) {
   return Array.from(groups, ([value, dimensionRows]) => {
     const totals = calculateTotals(dimensionRows);
     const { totalProfit, profitMargin } = calculateProfit(totals.totalRevenue, totals.totalCost);
+    const deliveryDays = dimensionKey === "shipMode"
+      ? dimensionRows.map((row) => row.deliveryDays).filter(Number.isInteger)
+      : [];
 
     return {
       value,
@@ -720,13 +788,17 @@ function calculateBreakdown(rows, dimensionKey) {
       margin: profitMargin,
       unitsSold: totals.totalUnitsSold,
       orderCount: totals.totalOrders,
+      averageDeliveryDays: deliveryDays.length
+        ? roundTo(deliveryDays.reduce((total, days) => total + days, 0) / deliveryDays.length, 1)
+        : null,
+      maximumDeliveryDays: deliveryDays.length ? Math.max(...deliveryDays) : null,
     };
   }).sort((first, second) => second.revenue - first.revenue);
 }
 
-function calculateBestAndLowestSellingProducts(productPerformance) {
+function calculateBestSellingAndBiggestLossMaker(productPerformance) {
   if (!productPerformance.length) {
-    return { bestSelling: null, lowestSelling: null };
+    return { bestSelling: null, biggestLossMaker: null };
   }
 
   const productsByUnitsSold = [...productPerformance].sort(
@@ -735,7 +807,9 @@ function calculateBestAndLowestSellingProducts(productPerformance) {
 
   return {
     bestSelling: { ...productsByUnitsSold[0], product: productsByUnitsSold[0].value },
-    lowestSelling: { ...productsByUnitsSold[productsByUnitsSold.length - 1], product: productsByUnitsSold[productsByUnitsSold.length - 1].value },
+    biggestLossMaker: productPerformance
+      .filter((product) => product.profit < 0)
+      .sort((first, second) => first.profit - second.profit)[0] || null,
   };
 }
 
@@ -746,6 +820,7 @@ function calculatePeriodComparison(rows, granularity, periodKey) {
   // The preceding period *present in the data*, not the calendar-adjacent one, so a gap
   // in the file cannot produce a phantom -100%.
   const previousPeriodKey = currentIndex > 0 ? periodKeys[currentIndex - 1] : null;
+  const yearAgoPeriodKey = getYearAgoPeriodKey(periodKey, granularity, periodKeys);
   const calculatePeriodTotals = (key) => {
     const totals = calculateTotals(periodGroups.get(key) || []);
     const { totalProfit } = calculateProfit(totals.totalRevenue, totals.totalCost);
@@ -756,6 +831,7 @@ function calculatePeriodComparison(rows, granularity, periodKey) {
   const previousPeriodTotals = previousPeriodKey
     ? calculatePeriodTotals(previousPeriodKey)
     : null;
+  const yearAgoTotals = yearAgoPeriodKey ? calculatePeriodTotals(yearAgoPeriodKey) : null;
   const percentChangeFor = (currentValue, previousValue) => {
     // A zero baseline has no meaningful percentage change.
     if (previousValue === 0) {
@@ -768,8 +844,10 @@ function calculatePeriodComparison(rows, granularity, periodKey) {
   return {
     currentPeriodKey: periodKey,
     previousPeriodKey,
+    yearAgoPeriodKey,
     currentPeriodTotals,
     previousPeriodTotals,
+    yearAgoTotals,
     percentChange: previousPeriodTotals
       ? {
           revenue: percentChangeFor(
@@ -790,17 +868,49 @@ function calculatePeriodComparison(rows, granularity, periodKey) {
           ),
         }
       : { revenue: null, profit: null, orders: null, unitsSold: null },
+    yearAgoPercentChange: yearAgoTotals
+      ? {
+          revenue: percentChangeFor(currentPeriodTotals.totalRevenue, yearAgoTotals.totalRevenue),
+          profit: percentChangeFor(currentPeriodTotals.totalProfit, yearAgoTotals.totalProfit),
+          orders: percentChangeFor(currentPeriodTotals.totalOrders, yearAgoTotals.totalOrders),
+          unitsSold: percentChangeFor(currentPeriodTotals.totalUnitsSold, yearAgoTotals.totalUnitsSold),
+        }
+      : { revenue: null, profit: null, orders: null, unitsSold: null },
   };
+}
+
+function getYearAgoPeriodKey(periodKey, granularity, periodKeys) {
+  if (granularity === "month") {
+    const [year, month] = periodKey.split("-");
+    const candidate = `${Number(year) - 1}-${month}`;
+    return periodKeys.includes(candidate) ? candidate : null;
+  }
+
+  const [year, month, day] = periodKey.split("-").map(Number);
+  const targetTime = Date.UTC(year, month - 1, day) - 364 * 86400000;
+  const nearestKey = periodKeys.reduce((closest, candidate) => {
+    const [candidateYear, candidateMonth, candidateDay] = candidate.split("-").map(Number);
+    const distance = Math.abs(Date.UTC(candidateYear, candidateMonth - 1, candidateDay) - targetTime);
+    return !closest || distance < closest.distance ? { key: candidate, distance } : closest;
+  }, null);
+
+  return nearestKey && nearestKey.distance <= 7 * 86400000 ? nearestKey.key : null;
 }
 
 function calculateAlerts(report) {
   const alerts = [];
-  const revenueChange = report.periodComparison.percentChange.revenue;
+  const yearAgoRevenueChange = report.periodComparison.yearAgoPercentChange.revenue;
+  const revenueChange = yearAgoRevenueChange === null
+    ? report.periodComparison.percentChange.revenue
+    : yearAgoRevenueChange;
+  const revenueBaseline = yearAgoRevenueChange === null
+    ? `previous ${report.granularity}`
+    : `same ${report.granularity} last year`;
 
   if (revenueChange !== null && revenueChange <= -20) {
     alerts.push({
       severity: "warning",
-      message: `Revenue declined ${Math.abs(revenueChange).toFixed(1)}% from the previous ${report.granularity}.`,
+      message: `Revenue declined ${Math.abs(revenueChange).toFixed(1)}% versus the ${revenueBaseline}.`,
     });
   }
 
@@ -815,6 +925,66 @@ function calculateAlerts(report) {
     alerts.push({
       severity: "info",
       message: `${invalidSalesRows.length} row${invalidSalesRows.length === 1 ? " was" : "s were"} skipped due to invalid data.`,
+    });
+  }
+
+  const discountedLossRows = report.rows.filter(
+    (row) => row.discountPercent !== null && row.discountPercent >= 30 && row.isLoss,
+  );
+  const discountedProfitLost = roundTo(
+    discountedLossRows.reduce((total, row) => total + (row.revenue - row.cost), 0),
+    2,
+  );
+  if (discountedLossRows.length) {
+    alerts.push({
+      severity: "warning",
+      message: `${discountedLossRows.length.toLocaleString()} discounted rows at 30% or more lost ${formatMoney(Math.abs(discountedProfitLost))} in profit.`,
+    });
+  }
+
+  const lossMakingProducts = report.productPerformance.filter((product) => product.profit < 0);
+  if (lossMakingProducts.length) {
+    const worstProduct = lossMakingProducts.sort((first, second) => first.profit - second.profit)[0];
+    alerts.push({
+      severity: "warning",
+      message: `${lossMakingProducts.length.toLocaleString()} products sold below cost; worst: ${worstProduct.value} (${formatMoney(worstProduct.profit)}).`,
+    });
+  }
+
+  const sameDayBreachedOrderIds = new Set(report.rows.filter((row) => (
+    row.shipMode === "Same Day"
+      && Number.isInteger(row.deliveryDays)
+      && row.deliveryDays > 0
+  )).map((row) => row.orderId));
+  if (sameDayBreachedOrderIds.size) {
+    alerts.push({
+      severity: "warning",
+      message: `${sameDayBreachedOrderIds.size.toLocaleString()} Same Day order${sameDayBreachedOrderIds.size === 1 ? "" : "s"} took more than 0 delivery days.`,
+    });
+  }
+
+  const previousCustomerPerformance = report.periodComparison.previousPeriodKey
+    ? calculateBreakdown(report.rowsByPeriod.get(report.periodComparison.previousPeriodKey), "customer")
+    : [];
+  const currentCustomers = new Set(report.customerPerformance.map((customer) => customer.value));
+  const churnedTopCustomer = previousCustomerPerformance.slice(0, 10).find(
+    (customer) => !currentCustomers.has(customer.value),
+  );
+  if (churnedTopCustomer) {
+    alerts.push({
+      severity: "warning",
+      message: `${churnedTopCustomer.value}, a top-10 customer in the previous ${report.granularity}, did not order this period.`,
+    });
+  }
+
+  const customerRevenue = report.customerPerformance.map((customer) => customer.revenue).sort((a, b) => b - a);
+  const topCustomerCount = Math.ceil(customerRevenue.length * 0.1);
+  const topCustomerRevenue = customerRevenue.slice(0, topCustomerCount).reduce((total, revenue) => total + revenue, 0);
+  const concentration = report.totals.totalRevenue === 0 ? 0 : (topCustomerRevenue / report.totals.totalRevenue) * 100;
+  if (topCustomerCount && concentration > 30) {
+    alerts.push({
+      severity: "info",
+      message: `The top 10% of customers account for ${concentration.toFixed(1)}% of revenue.`,
     });
   }
 
@@ -834,7 +1004,7 @@ function buildReport(rows, { granularity, periodKey }) {
   const productPerformance = breakdowns.product;
   const customerPerformance = breakdowns.customer;
   const promotionPerformance = breakdowns.promotion;
-  const { bestSelling, lowestSelling } = calculateBestAndLowestSellingProducts(productPerformance);
+  const { bestSelling, biggestLossMaker } = calculateBestSellingAndBiggestLossMaker(productPerformance);
   const periodComparison = calculatePeriodComparison(rows, granularity, periodKey);
   const report = {
     granularity,
@@ -846,8 +1016,10 @@ function buildReport(rows, { granularity, periodKey }) {
     promotionPerformance,
     breakdowns,
     bestSelling,
-    lowestSelling,
+    biggestLossMaker,
     periodComparison,
+    rows: periodRows,
+    rowsByPeriod: groupRowsByPeriod(rows, granularity),
   };
 
   return { ...report, alerts: calculateAlerts(report) };
@@ -885,35 +1057,44 @@ function renderSummaryCards(report) {
     ["Total Orders", report.totals.totalOrders.toLocaleString()],
     ["Total Units Sold", report.totals.totalUnitsSold.toLocaleString()],
     ["Best-Selling Product", report.bestSelling ? report.bestSelling.product : "—", report.bestSelling ? `${report.bestSelling.unitsSold.toLocaleString()} units sold` : ""],
-    ["Lowest-Selling Product", report.lowestSelling ? report.lowestSelling.product : "—", report.lowestSelling ? `${report.lowestSelling.unitsSold.toLocaleString()} units sold` : ""],
+    ["Biggest Loss-Maker", report.biggestLossMaker ? report.biggestLossMaker.value : "—", report.biggestLossMaker ? formatMoney(report.biggestLossMaker.profit) : ""],
   ];
 
-  return `<section class="report-section"><h3>Summary</h3><div class="summary-grid">${cards.map(([label, value, detail]) => `<article class="summary-card"><span class="summary-card-label">${escapeHtml(label)}</span><strong class="summary-card-value">${escapeHtml(value)}</strong>${detail ? `<span class="summary-card-detail">${escapeHtml(detail)}</span>` : ""}</article>`).join("")}</div></section>`;
+  return renderReportSection("summary", "Summary", `<div class="summary-grid">${cards.map(([label, value, detail]) => `<article class="summary-card"><span class="summary-card-label">${escapeHtml(label)}</span><strong class="summary-card-value">${escapeHtml(value)}</strong>${detail ? `<span class="summary-card-detail">${escapeHtml(detail)}</span>` : ""}</article>`).join("")}</div>`);
 }
 
 function renderPeriodComparison(periodComparison, granularity) {
-  const title = formatComparisonTitle(granularity);
-
-  if (!periodComparison.previousPeriodKey) {
-    return `<section class="report-section"><h3>${title}</h3><p class="report-empty-state">No previous ${granularity} data to compare yet.</p></section>`;
-  }
-
+  const title = `${formatComparisonTitle(granularity)} and year-over-year comparison`;
   const metrics = [
     ["Revenue", "totalRevenue", "revenue", formatMoney],
     ["Profit", "totalProfit", "profit", formatMoney],
     ["Orders", "totalOrders", "orders", (value) => value.toLocaleString()],
     ["Units sold", "totalUnitsSold", "unitsSold", (value) => value.toLocaleString()],
   ];
-  const cards = metrics.map(([label, totalKey, changeKey, formatter]) => {
-    const change = periodComparison.percentChange[changeKey];
-    const changeClass = change === null || change === 0 ? "change-neutral" : change > 0 ? "change-positive" : "change-negative";
-    const changeText = change === null ? "No percentage baseline" : `${change > 0 ? "+" : ""}${formatPercent(change)}`;
-    return `<article class="comparison-card"><span class="comparison-label">${label}</span><p class="comparison-values">Current: ${formatter(periodComparison.currentPeriodTotals[totalKey])}<br>Previous: ${formatter(periodComparison.previousPeriodTotals[totalKey])}</p><span class="${changeClass}">${changeText}</span></article>`;
-  }).join("");
-  const currentLabel = escapeHtml(formatPeriodLabel(periodComparison.currentPeriodKey, granularity));
-  const previousLabel = escapeHtml(formatPeriodLabel(periodComparison.previousPeriodKey, granularity));
+  const renderComparisonCards = (baselineTotals, changes, baselineLabel) => {
+    if (!baselineTotals) {
+      return `<div class="comparison-half"><h4>${escapeHtml(baselineLabel)}</h4><p class="report-empty-state">No comparison data available.</p></div>`;
+    }
 
-  return `<section class="report-section"><h3>${title}</h3><p class="summary-card-detail">${currentLabel} compared with ${previousLabel}</p><div class="comparison-grid">${cards}</div></section>`;
+    const cards = metrics.map(([label, totalKey, changeKey, formatter]) => {
+      const change = changes[changeKey];
+      const changeClass = change === null || change === 0 ? "change-neutral" : change > 0 ? "change-positive" : "change-negative";
+      const changeText = change === null ? "No percentage baseline" : `${change > 0 ? "+" : ""}${formatPercent(change)}`;
+      return `<article class="comparison-card"><span class="comparison-label">${label}</span><p class="comparison-values">Current: ${formatter(periodComparison.currentPeriodTotals[totalKey])}<br>Baseline: ${formatter(baselineTotals[totalKey])}</p><span class="${changeClass}">${changeText}</span></article>`;
+    }).join("");
+    return `<div class="comparison-half"><h4>${escapeHtml(baselineLabel)}</h4><div class="comparison-grid">${cards}</div></div>`;
+  };
+  const currentLabel = escapeHtml(formatPeriodLabel(periodComparison.currentPeriodKey, granularity));
+  const previousLabel = periodComparison.previousPeriodKey ? formatPeriodLabel(periodComparison.previousPeriodKey, granularity) : `previous ${granularity}`;
+  const yearAgoLabel = periodComparison.yearAgoPeriodKey ? formatPeriodLabel(periodComparison.yearAgoPeriodKey, granularity) : `same ${granularity} last year`;
+
+  return renderReportSection("comparison", title, `<p class="summary-card-detail">${currentLabel}</p><div class="comparison-pairs">${renderComparisonCards(periodComparison.previousPeriodTotals, periodComparison.percentChange, `Vs previous ${granularity}: ${previousLabel}`)}${renderComparisonCards(periodComparison.yearAgoTotals, periodComparison.yearAgoPercentChange, `Vs same ${granularity} last year: ${yearAgoLabel}`)}</div>`);
+}
+
+function renderReportSection(sectionKey, title, content) {
+  const isCollapsed = collapsedReportSections.has(sectionKey);
+  const toggleLabel = isCollapsed ? `Expand ${title}` : `Collapse ${title}`;
+  return `<section class="report-section ${isCollapsed ? "is-collapsed" : ""}"><div class="report-section-header"><h3>${escapeHtml(title)}</h3><button type="button" class="report-section-toggle" data-report-section="${escapeHtml(sectionKey)}" aria-expanded="${String(!isCollapsed)}">${isCollapsed ? "▸" : "▾"}<span class="visually-hidden">${escapeHtml(toggleLabel)}</span></button></div>${isCollapsed ? "" : content}</section>`;
 }
 
 function renderTable(headers, rows) {
@@ -932,17 +1113,29 @@ function renderTruncatedSection(title, sectionKey, itemNoun, headers, items, ren
     ? `<button type="button" class="table-toggle" data-section="${escapeHtml(sectionKey)}">${escapeHtml(toggleLabel)}</button>`
     : "";
 
-  return `<section class="report-section"><h3>${escapeHtml(title)}</h3>${renderTable(headers, visibleItems.map(renderRow).join(""))}${toggleButton}</section>`;
+  return renderReportSection(sectionKey, title, `${renderTable(headers, visibleItems.map(renderRow).join(""))}${toggleButton}`);
 }
 
 function renderBreakdownSection(dimension, items) {
+  const isShipMode = dimension.key === "shipMode";
+  const headers = [dimension.label, "Revenue", "Cost", "Profit", "Margin", "Units Sold", "Orders"];
+
+  if (isShipMode) {
+    headers.push("Average Delivery Days", "Maximum Delivery Days");
+  }
+
   return renderTruncatedSection(
     `${dimension.label} performance`,
     dimension.key,
     dimension.noun,
-    [dimension.label, "Revenue", "Cost", "Profit", "Margin", "Units Sold", "Orders"],
+    headers,
     items,
-    (item) => `<tr><td>${escapeHtml(item.value)}</td><td>${formatMoney(item.revenue)}</td><td>${formatMoney(item.cost)}</td><td>${formatMoney(item.profit)}</td><td>${formatPercent(item.margin)}</td><td>${item.unitsSold.toLocaleString()}</td><td>${item.orderCount.toLocaleString()}</td></tr>`,
+    (item) => {
+      const deliveryDays = isShipMode
+        ? `<td>${item.averageDeliveryDays === null ? "â€”" : item.averageDeliveryDays.toFixed(1)}</td><td>${item.maximumDeliveryDays === null ? "â€”" : item.maximumDeliveryDays.toLocaleString()}</td>`
+        : "";
+      return `<tr><td>${escapeHtml(item.value)}</td><td>${formatMoney(item.revenue)}</td><td>${formatMoney(item.cost)}</td><td>${formatMoney(item.profit)}</td><td>${formatPercent(item.margin)}</td><td>${item.unitsSold.toLocaleString()}</td><td>${item.orderCount.toLocaleString()}</td>${deliveryDays}</tr>`;
+    },
   );
 }
 
@@ -950,7 +1143,7 @@ function renderAlerts(alerts) {
   const content = alerts.length
     ? `<ul class="alert-list">${alerts.map((alert) => `<li class="alert-item alert-${escapeHtml(alert.severity)}">${escapeHtml(alert.message)}</li>`).join("")}</ul>`
     : '<p class="report-empty-state">No major issues detected.</p>';
-  return `<section class="report-section"><h3>Alerts</h3>${content}</section>`;
+  return renderReportSection("alerts", "Alerts", content);
 }
 
 function renderReport(report) {
@@ -993,7 +1186,8 @@ function buildReportCsv(report) {
     ["Total Orders", report.totals.totalOrders],
     ["Total Units Sold", report.totals.totalUnitsSold],
     ["Best-Selling Product", report.bestSelling?.product ?? ""],
-    ["Lowest-Selling Product", report.lowestSelling?.product ?? ""],
+    ["Biggest Loss-Maker", report.biggestLossMaker?.value ?? ""],
+    ["Biggest Loss-Maker Profit", report.biggestLossMaker?.profit ?? ""],
   ]);
 
   const { periodComparison } = report;
@@ -1004,7 +1198,7 @@ function buildReportCsv(report) {
         ["Orders", periodComparison.currentPeriodTotals.totalOrders, periodComparison.previousPeriodTotals.totalOrders, periodComparison.percentChange.orders],
         ["Units Sold", periodComparison.currentPeriodTotals.totalUnitsSold, periodComparison.previousPeriodTotals.totalUnitsSold, periodComparison.percentChange.unitsSold],
       ]
-    : [[`No previous ${report.granularity} data to compare yet.`]];
+    : [[`No comparison data to compare yet.`]];
   addSection(
     formatComparisonTitle(report.granularity),
     periodComparison.previousPeriodKey
@@ -1013,10 +1207,29 @@ function buildReportCsv(report) {
     comparisonRows,
   );
 
+  const yearAgoRows = periodComparison.yearAgoPeriodKey
+    ? [
+        ["Revenue", periodComparison.currentPeriodTotals.totalRevenue, periodComparison.yearAgoTotals.totalRevenue, periodComparison.yearAgoPercentChange.revenue],
+        ["Profit", periodComparison.currentPeriodTotals.totalProfit, periodComparison.yearAgoTotals.totalProfit, periodComparison.yearAgoPercentChange.profit],
+        ["Orders", periodComparison.currentPeriodTotals.totalOrders, periodComparison.yearAgoTotals.totalOrders, periodComparison.yearAgoPercentChange.orders],
+        ["Units Sold", periodComparison.currentPeriodTotals.totalUnitsSold, periodComparison.yearAgoTotals.totalUnitsSold, periodComparison.yearAgoPercentChange.unitsSold],
+      ]
+    : [[`No same ${report.granularity} last year data to compare yet.`]];
+  addSection(
+    `Year-over-year ${report.granularity} comparison`,
+    periodComparison.yearAgoPeriodKey
+      ? ["Metric", `Current ${report.granularity}`, `Same ${report.granularity} last year`, "% Change"]
+      : null,
+    yearAgoRows,
+  );
+
   DIMENSIONS.filter((dimension) => report.breakdowns[dimension.key]).forEach((dimension) => {
+    const isShipMode = dimension.key === "shipMode";
     addSection(
       `${dimension.label} Performance`,
-      [dimension.label, "Revenue", "Cost", "Profit", "Margin (%)", "Units Sold", "Orders"],
+      [dimension.label, "Revenue", "Cost", "Profit", "Margin (%)", "Units Sold", "Orders"].concat(
+        isShipMode ? ["Average Delivery Days", "Maximum Delivery Days"] : [],
+      ),
       report.breakdowns[dimension.key].map((item) => [
         item.value,
         item.revenue,
@@ -1025,7 +1238,7 @@ function buildReportCsv(report) {
         item.margin,
         item.unitsSold,
         item.orderCount,
-      ]),
+      ].concat(isShipMode ? [item.averageDeliveryDays ?? "", item.maximumDeliveryDays ?? ""] : [])),
     );
   });
   addSection(
@@ -1074,6 +1287,7 @@ function renderCurrentReport() {
     granularity: selectedGranularity,
     periodKey: selectedPeriodKey,
   });
+  updateSectionToggleLabel();
   reportOutput.innerHTML = renderReport(currentReport);
   downloadReportButton.hidden = false;
   reportHeadingHint.textContent =
