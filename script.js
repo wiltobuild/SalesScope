@@ -13,6 +13,7 @@ const reportHeadingHint = document.querySelector("#report-heading-hint");
 const reportControls = document.querySelector("#report-controls");
 const granularitySelect = document.querySelector("#granularity-select");
 const periodSelect = document.querySelector("#period-select");
+const focusFiltersElement = document.querySelector("#focus-filters");
 const toggleAllSectionsButton = document.querySelector("#toggle-all-sections-button");
 const initialReportHeadingHint = reportHeadingHint.textContent;
 const expectedColumns = [
@@ -84,6 +85,10 @@ const expandedSections = new Set();
 const collapsedReportSections = new Set();
 // Charts start visible; this set deliberately records only charts the reader hid.
 const collapsedCharts = new Set();
+// Table state is kept outside the rendered HTML so interaction survives report refreshes.
+const tableSorts = new Map();
+const tableSearches = new Map();
+const focusFilters = new Map();
 
 salesFileInput.addEventListener("change", handleFileInputChange);
 loadSuperstoreButton.addEventListener("click", loadSuperstoreData);
@@ -97,6 +102,7 @@ toggleAllSectionsButton.addEventListener("click", toggleAllReportSections);
 // The report HTML is replaced wholesale on every render, so per-button listeners would
 // not survive. One delegated listener on the container does.
 reportOutput.addEventListener("click", handleReportOutputClick);
+reportOutput.addEventListener("input", handleReportOutputInput);
 reportOutput.addEventListener("pointermove", handleChartPointerMove);
 reportOutput.addEventListener("pointerleave", hideChartCrosshair);
 
@@ -109,8 +115,12 @@ function resetApp() {
   selectedPeriodKey = null;
   availableDimensionKeys.clear();
   expandedSections.clear();
+  tableSorts.clear();
+  tableSearches.clear();
+  focusFilters.clear();
   collapsedReportSections.clear();
   collapsedCharts.clear();
+  focusFiltersElement.innerHTML = "";
   clearSelectedFile();
   clearUploadError();
   setApiStatus("");
@@ -354,6 +364,10 @@ function ingestRows({ rawRows, headers }, sourceLabel) {
   currentReport = null;
   selectedPeriodKey = null;
   expandedSections.clear();
+  tableSorts.clear();
+  tableSearches.clear();
+  focusFilters.clear();
+  focusFiltersElement.innerHTML = "";
   setGenerateButtonEnabled(false);
   reportControls.hidden = true;
 
@@ -645,6 +659,7 @@ function populatePeriods() {
 function handleGranularityChange() {
   selectedGranularity = granularitySelect.value;
   expandedSections.clear();
+  focusFilters.clear();
   // The period list is granularity-specific, so the previous selection rarely survives.
   selectedPeriodKey = null;
   populatePeriods();
@@ -654,10 +669,41 @@ function handleGranularityChange() {
 function handlePeriodChange() {
   selectedPeriodKey = periodSelect.value;
   expandedSections.clear();
+  focusFilters.clear();
   renderCurrentReport();
 }
 
 function handleReportOutputClick(event) {
+  const removeFocusButton = event.target.closest("[data-remove-focus]");
+
+  if (removeFocusButton && currentReport) {
+    focusFilters.delete(removeFocusButton.dataset.removeFocus);
+    renderCurrentReport();
+    return;
+  }
+
+  const sortButton = event.target.closest("[data-sort-section]");
+
+  if (sortButton && currentReport) {
+    const section = sortButton.dataset.sortSection;
+    const column = sortButton.dataset.sortColumn;
+    const currentSort = tableSorts.get(section);
+    tableSorts.set(section, {
+      column,
+      direction: currentSort && currentSort.column === column && currentSort.direction === "asc" ? "desc" : "asc",
+    });
+    reportOutput.innerHTML = renderReport(currentReport);
+    return;
+  }
+
+  const focusRow = event.target.closest("[data-focus-dimension]");
+
+  if (focusRow && currentReport && !event.target.closest("button, input, a")) {
+    focusFilters.set(focusRow.dataset.focusDimension, focusRow.dataset.focusValue);
+    renderCurrentReport();
+    return;
+  }
+
   const chartToggle = event.target.closest("[data-chart]");
 
   if (chartToggle && currentReport) {
@@ -704,6 +750,22 @@ function handleReportOutputClick(event) {
   }
 
   reportOutput.innerHTML = renderReport(currentReport);
+}
+
+function handleReportOutputInput(event) {
+  const searchInput = event.target.closest("[data-table-search]");
+
+  if (!searchInput || !currentReport) {
+    return;
+  }
+
+  tableSearches.set(searchInput.dataset.tableSearch, searchInput.value);
+  reportOutput.innerHTML = renderReport(currentReport);
+  const replacement = reportOutput.querySelector(`[data-table-search="${CSS.escape(searchInput.dataset.tableSearch)}"]`);
+  if (replacement) {
+    replacement.focus();
+    replacement.setSelectionRange(searchInput.selectionStart, searchInput.selectionEnd);
+  }
 }
 
 function handleChartPointerMove(event) {
@@ -1053,7 +1115,10 @@ function calculateAlerts(report) {
 function buildReport(rows, { granularity, periodKey }) {
   // Every figure below describes the selected period only; the comparison is the one
   // place that still needs the full set of rows.
-  const periodRows = rows.filter((row) => getPeriodKey(row.date, granularity) === periodKey);
+  const focusedRows = rows.filter((row) => Array.from(focusFilters).every(
+    ([dimensionKey, value]) => row[dimensionKey] === value,
+  ));
+  const periodRows = focusedRows.filter((row) => getPeriodKey(row.date, granularity) === periodKey);
   const totals = calculateTotals(periodRows);
   const profit = calculateProfit(totals.totalRevenue, totals.totalCost);
   const breakdowns = Object.fromEntries(
@@ -1064,8 +1129,8 @@ function buildReport(rows, { granularity, periodKey }) {
   const customerPerformance = breakdowns.customer;
   const promotionPerformance = breakdowns.promotion;
   const { bestSelling, biggestLossMaker } = calculateBestSellingAndBiggestLossMaker(productPerformance);
-  const periodComparison = calculatePeriodComparison(rows, granularity, periodKey);
-  const revenueByPeriod = Array.from(groupRowsByPeriod(rows, granularity), ([key, periodRows]) => ({
+  const periodComparison = calculatePeriodComparison(focusedRows, granularity, periodKey);
+  const revenueByPeriod = Array.from(groupRowsByPeriod(focusedRows, granularity), ([key, periodRows]) => ({
     key,
     revenue: calculateTotals(periodRows).totalRevenue,
   })).sort((first, second) => first.key.localeCompare(second.key));
@@ -1082,11 +1147,36 @@ function buildReport(rows, { granularity, periodKey }) {
     biggestLossMaker,
     periodComparison,
     rows: periodRows,
-    rowsByPeriod: groupRowsByPeriod(rows, granularity),
+    rowsByPeriod: groupRowsByPeriod(focusedRows, granularity),
     revenueByPeriod,
   };
 
-  return { ...report, alerts: calculateAlerts(report) };
+  return { ...report, customerIntelligence: calculateCustomerIntelligence(report), alerts: calculateAlerts(report) };
+}
+
+function renderFocusFilters() {
+  focusFiltersElement.innerHTML = Array.from(focusFilters, ([dimensionKey, value]) => {
+    const dimension = DIMENSIONS.find((candidate) => candidate.key === dimensionKey);
+    return `<span class="focus-chip">${escapeHtml(dimension.label)}: ${escapeHtml(value)}<button type="button" data-remove-focus="${escapeHtml(dimensionKey)}" aria-label="Remove ${escapeHtml(dimension.label)} filter">×</button></span>`;
+  }).join("");
+}
+
+function calculateCustomerIntelligence(report) {
+  const revenue = report.customerPerformance.reduce((total, customer) => total + customer.revenue, 0);
+  const concentration = [10, 20, 50].map((percent) => {
+    const count = Math.ceil(report.customerPerformance.length * (percent / 100));
+    const topRevenue = report.customerPerformance.slice(0, count).reduce((total, customer) => total + customer.revenue, 0);
+    return { percent, revenueShare: revenue === 0 ? 0 : (topRevenue / revenue) * 100 };
+  });
+  const previousCustomers = report.periodComparison.previousPeriodKey
+    ? calculateBreakdown(report.rowsByPeriod.get(report.periodComparison.previousPeriodKey) || [], "customer")
+    : [];
+  const currentCustomerNames = new Set(report.customerPerformance.map((customer) => customer.value));
+  return {
+    concentration,
+    atRisk: previousCustomers.filter((customer) => !currentCustomerNames.has(customer.value)).slice(0, TOP_ROW_COUNT),
+    unprofitable: report.customerPerformance.filter((customer) => customer.profit < 0).sort((first, second) => first.profit - second.profit),
+  };
 }
 
 function escapeHtml(value) {
@@ -1161,23 +1251,56 @@ function renderReportSection(sectionKey, title, content) {
   return `<section class="report-section ${isCollapsed ? "is-collapsed" : ""}"><div class="report-section-header"><h3>${escapeHtml(title)}</h3><button type="button" class="report-section-toggle" data-report-section="${escapeHtml(sectionKey)}" aria-expanded="${String(!isCollapsed)}">${isCollapsed ? "▸" : "▾"}<span class="visually-hidden">${escapeHtml(toggleLabel)}</span></button></div>${isCollapsed ? "" : content}</section>`;
 }
 
-function renderTable(headers, rows) {
-  return `<div class="table-wrap"><table class="report-table"><thead><tr>${headers.map((header) => `<th scope="col">${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`;
+function renderTable(headers, rows, sectionKey = null) {
+  const sort = sectionKey ? tableSorts.get(sectionKey) || { column: "revenue", direction: "desc" } : null;
+  const headingMarkup = headers.map((header) => {
+    const [label, column] = Array.isArray(header) ? header : [header, null];
+    if (!sectionKey || !column) {
+      return `<th scope="col">${escapeHtml(label)}</th>`;
+    }
+
+    const isActive = sort.column === column;
+    const direction = isActive ? sort.direction : "none";
+    const arrow = isActive ? (sort.direction === "asc" ? " ▲" : " ▼") : "";
+    return `<th scope="col" aria-sort="${direction === "none" ? "none" : direction === "asc" ? "ascending" : "descending"}"><button type="button" class="table-sort" data-sort-section="${escapeHtml(sectionKey)}" data-sort-column="${escapeHtml(column)}">${escapeHtml(label)}${arrow}</button></th>`;
+  }).join("");
+  return `<div class="table-wrap"><table class="report-table"><thead><tr>${headingMarkup}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function sortedBreakdownItems(sectionKey, items) {
+  const sort = tableSorts.get(sectionKey) || { column: "revenue", direction: "desc" };
+  const multiplier = sort.direction === "asc" ? 1 : -1;
+  return [...items].sort((first, second) => {
+    const firstValue = first[sort.column];
+    const secondValue = second[sort.column];
+    const comparison = typeof firstValue === "string"
+      ? firstValue.localeCompare(secondValue)
+      : firstValue - secondValue;
+    return comparison * multiplier || first.value.localeCompare(second.value);
+  });
 }
 
 // Real files carry hundreds of products and customers, so only the strongest are shown
 // until asked otherwise. The CSV export is never truncated.
 function renderTruncatedSection(title, sectionKey, itemNoun, headers, items, renderRow) {
+  const search = tableSearches.get(sectionKey) || "";
+  const filteredItems = search
+    ? items.filter((item) => item.value.toLowerCase().includes(search.toLowerCase()))
+    : items;
+  const sortedItems = sortedBreakdownItems(sectionKey, filteredItems);
   const isExpanded = expandedSections.has(sectionKey);
-  const visibleItems = isExpanded ? items : items.slice(0, TOP_ROW_COUNT);
+  const visibleItems = isExpanded ? sortedItems : sortedItems.slice(0, TOP_ROW_COUNT);
   const toggleLabel = isExpanded
     ? `Show top ${TOP_ROW_COUNT}`
-    : `Show all ${items.length.toLocaleString()} ${itemNoun}`;
-  const toggleButton = items.length > TOP_ROW_COUNT
+    : `Show all ${sortedItems.length.toLocaleString()} ${itemNoun}`;
+  const toggleButton = sortedItems.length > TOP_ROW_COUNT
     ? `<button type="button" class="table-toggle" data-section="${escapeHtml(sectionKey)}">${escapeHtml(toggleLabel)}</button>`
     : "";
+  const searchInput = ["product", "customer"].includes(sectionKey)
+    ? `<label class="table-search-label">Search ${escapeHtml(itemNoun)}<input type="search" data-table-search="${escapeHtml(sectionKey)}" value="${escapeHtml(search)}" placeholder="Search by name"></label>`
+    : "";
 
-  return renderReportSection(sectionKey, title, `${renderTable(headers, visibleItems.map(renderRow).join(""))}${toggleButton}`);
+  return renderReportSection(sectionKey, title, `${searchInput}${renderTable(headers, visibleItems.map(renderRow).join(""), sectionKey)}${toggleButton}`);
 }
 
 function renderChart(chartKey, title, description, svg, height = 260) {
@@ -1284,10 +1407,10 @@ function renderBreakdownChart(dimension, items) {
 
 function renderBreakdownSection(dimension, items) {
   const isShipMode = dimension.key === "shipMode";
-  const headers = [dimension.label, "Revenue", "Cost", "Profit", "Margin", "Units Sold", "Orders"];
+  const headers = [[dimension.label, "value"], ["Revenue", "revenue"], ["Cost", "cost"], ["Profit", "profit"], ["Margin", "margin"], ["Units Sold", "unitsSold"], ["Orders", "orderCount"]];
 
   if (isShipMode) {
-    headers.push("Average Delivery Days", "Maximum Delivery Days");
+    headers.push(["Average Delivery Days", "averageDeliveryDays"], ["Maximum Delivery Days", "maximumDeliveryDays"]);
   }
 
   const table = renderTruncatedSection(
@@ -1300,7 +1423,7 @@ function renderBreakdownSection(dimension, items) {
       const deliveryDays = isShipMode
         ? `<td>${item.averageDeliveryDays === null ? "â€”" : item.averageDeliveryDays.toFixed(1)}</td><td>${item.maximumDeliveryDays === null ? "â€”" : item.maximumDeliveryDays.toLocaleString()}</td>`
         : "";
-      return `<tr><td>${escapeHtml(item.value)}</td><td>${formatMoney(item.revenue)}</td><td>${formatMoney(item.cost)}</td><td>${formatMoney(item.profit)}</td><td>${formatPercent(item.margin)}</td><td>${item.unitsSold.toLocaleString()}</td><td>${item.orderCount.toLocaleString()}</td>${deliveryDays}</tr>`;
+      return `<tr class="breakdown-row" data-focus-dimension="${escapeHtml(dimension.key)}" data-focus-value="${escapeHtml(item.value)}" tabindex="0" title="Focus report on ${escapeHtml(item.value)}"><td>${escapeHtml(item.value)}</td><td>${formatMoney(item.revenue)}</td><td>${formatMoney(item.cost)}</td><td>${formatMoney(item.profit)}</td><td>${formatPercent(item.margin)}</td><td>${item.unitsSold.toLocaleString()}</td><td>${item.orderCount.toLocaleString()}</td>${deliveryDays}</tr>`;
     },
   );
   const hasDiscountBands = items.length > 0 && items.every(
@@ -1320,10 +1443,22 @@ function renderAlerts(alerts) {
   return renderReportSection("alerts", "Alerts", content);
 }
 
+function renderCustomerIntelligence(intelligence) {
+  const concentration = `<div class="summary-grid customer-kpis">${intelligence.concentration.map((item) => `<article class="summary-card"><span class="summary-card-label">Top ${item.percent}% of customers</span><strong class="summary-card-value">${formatPercent(item.revenueShare)}</strong><span class="summary-card-detail">of revenue</span></article>`).join("")}</div>`;
+  const atRiskRows = intelligence.atRisk.length
+    ? intelligence.atRisk.map((customer) => `<tr><td>${escapeHtml(customer.value)}</td><td>${formatMoney(customer.revenue)}</td><td>${customer.orderCount.toLocaleString()}</td></tr>`).join("")
+    : '<tr><td colspan="3">No at-risk customers in the previous period.</td></tr>';
+  const unprofitableRows = intelligence.unprofitable.length
+    ? intelligence.unprofitable.slice(0, TOP_ROW_COUNT).map((customer) => `<tr><td>${escapeHtml(customer.value)}</td><td>${formatMoney(customer.profit)}</td><td>${formatMoney(customer.revenue)}</td></tr>`).join("")
+    : '<tr><td colspan="3">No unprofitable customers in this period.</td></tr>';
+  return renderReportSection("customer-intelligence", "Customer intelligence", `${concentration}<div class="intelligence-tables"><div><h4>At-risk customers</h4><p class="summary-card-detail">Top previous-period customers who did not order this period.</p>${renderTable(["Customer", "Previous Revenue", "Previous Orders"], atRiskRows)}</div><div><h4>Unprofitable customers (${intelligence.unprofitable.length.toLocaleString()})</h4>${renderTable(["Customer", "Profit", "Revenue"], unprofitableRows)}</div></div>`);
+}
+
 function renderReport(report) {
   return [
     renderAlerts(report.alerts),
     renderSummaryCards(report),
+    renderCustomerIntelligence(report.customerIntelligence),
     renderReportSection("revenue-over-time", "Revenue over time", `${renderRevenueOverTimeChart(report)}${renderTable(["Period", "Revenue"], report.revenueByPeriod.map((point) => `<tr><td>${escapeHtml(formatPeriodLabel(point.key, report.granularity))}</td><td>${formatMoney(point.revenue)}</td></tr>`).join(""))}`),
     renderPeriodComparison(report.periodComparison, report.granularity),
     ...DIMENSIONS.filter((dimension) => report.breakdowns[dimension.key]).map(
@@ -1398,6 +1533,26 @@ function buildReportCsv(report) {
     yearAgoRows,
   );
 
+  addSection(
+    "Customer Concentration",
+    ["Customer Group", "Revenue Share (%)"],
+    report.customerIntelligence.concentration.map((item) => [`Top ${item.percent}%`, item.revenueShare]),
+  );
+  addSection(
+    "At-Risk Customers",
+    ["Customer", "Previous Period Revenue", "Previous Period Orders"],
+    report.customerIntelligence.atRisk.length
+      ? report.customerIntelligence.atRisk.map((customer) => [customer.value, customer.revenue, customer.orderCount])
+      : [["None", "", ""]],
+  );
+  addSection(
+    "Unprofitable Customers",
+    ["Customer", "Profit", "Revenue"],
+    report.customerIntelligence.unprofitable.length
+      ? report.customerIntelligence.unprofitable.map((customer) => [customer.value, customer.profit, customer.revenue])
+      : [["None", "", ""]],
+  );
+
   DIMENSIONS.filter((dimension) => report.breakdowns[dimension.key]).forEach((dimension) => {
     const isShipMode = dimension.key === "shipMode";
     addSection(
@@ -1462,6 +1617,7 @@ function renderCurrentReport() {
     granularity: selectedGranularity,
     periodKey: selectedPeriodKey,
   });
+  renderFocusFilters();
   updateSectionToggleLabel();
   reportOutput.innerHTML = renderReport(currentReport);
   downloadReportButton.hidden = false;

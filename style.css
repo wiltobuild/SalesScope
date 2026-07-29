@@ -373,6 +373,16 @@ h1 {
 .report-table { width: 100%; min-width: 560px; border-collapse: collapse; font-size: 0.88rem; }
 .report-table th, .report-table td { padding: 0.7rem; border-bottom: 1px solid #e4e9e5; text-align: left; white-space: nowrap; }
 .report-table th { color: #526058; background: #f1f6f2; font-size: 0.76rem; letter-spacing: 0.02em; text-transform: uppercase; }
+.report-table th .table-sort { padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; font: inherit; font-weight: 700; letter-spacing: inherit; text-transform: inherit; }
+.breakdown-row { cursor: pointer; }
+.breakdown-row:hover, .breakdown-row:focus { outline: 2px solid #9fc9a9; outline-offset: -2px; background: #f3f8f4; }
+.table-search-label { display: grid; gap: 0.35rem; margin: 0 0 0.75rem; color: #526058; font-size: 0.85rem; font-weight: 700; }
+.table-search-label input { width: min(100%, 22rem); padding: 0.5rem 0.6rem; border: 1px solid #dce5dd; border-radius: 0.4rem; font: inherit; }
+.focus-filters { display: flex; flex-wrap: wrap; align-self: end; gap: 0.45rem; }
+.focus-chip { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.42rem 0.5rem; border: 1px solid #b9d8c0; border-radius: 999px; color: #285f3b; background: #eef7ef; font-size: 0.82rem; font-weight: 700; }
+.focus-chip button { padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; font: inherit; font-size: 1.1rem; line-height: 1; }
+.intelligence-tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-top: 1rem; }
+.intelligence-tables h4 { margin: 0; color: #52514e; font-size: 0.9rem; }
 
 .alert-list { display: grid; gap: 0.6rem; margin: 0; padding: 0; list-style: none; }
 .alert-item, .report-empty-state { padding: 0.75rem 0.85rem; border-radius: 10px; font-size: 0.88rem; }
