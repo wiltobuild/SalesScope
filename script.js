@@ -1247,31 +1247,34 @@ function renderSummaryCards(report) {
 }
 
 function renderPeriodComparison(periodComparison, granularity) {
-  const title = `${formatComparisonTitle(granularity)} and year-over-year comparison`;
+  const title = "Period comparison";
   const metrics = [
     ["Revenue", "totalRevenue", "revenue", formatMoney],
     ["Profit", "totalProfit", "profit", formatMoney],
     ["Orders", "totalOrders", "orders", (value) => value.toLocaleString()],
     ["Units sold", "totalUnitsSold", "unitsSold", (value) => value.toLocaleString()],
   ];
-  const renderComparisonCards = (baselineTotals, changes, baselineLabel) => {
-    if (!baselineTotals) {
-      return `<div class="comparison-half"><h4>${escapeHtml(baselineLabel)}</h4><p class="report-empty-state">No comparison data available.</p></div>`;
+  const renderDelta = (changes, changeKey, baselineLabel) => {
+    if (!changes) {
+      return `<span class="comparison-delta change-neutral">${escapeHtml(baselineLabel)}: No comparison data</span>`;
     }
 
-    const cards = metrics.map(([label, totalKey, changeKey, formatter]) => {
-      const change = changes[changeKey];
-      const changeClass = change === null || change === 0 ? "change-neutral" : change > 0 ? "change-positive" : "change-negative";
-      const changeText = change === null ? "No percentage baseline" : `${change > 0 ? "+" : ""}${formatPercent(change)}`;
-      return `<article class="comparison-card"><span class="comparison-label">${label}</span><p class="comparison-values">Current: ${formatter(periodComparison.currentPeriodTotals[totalKey])}<br>Baseline: ${formatter(baselineTotals[totalKey])}</p><span class="${changeClass}">${changeText}</span></article>`;
-    }).join("");
-    return `<div class="comparison-half"><h4>${escapeHtml(baselineLabel)}</h4><div class="comparison-grid">${cards}</div></div>`;
+    const change = changes[changeKey];
+    const changeClass = change === null || change === 0 ? "change-neutral" : change > 0 ? "change-positive" : "change-negative";
+    const changeText = change === null ? "No percentage baseline" : `${change > 0 ? "+" : ""}${formatPercent(change)}`;
+    return `<span class="comparison-delta ${changeClass}">${escapeHtml(baselineLabel)}: ${escapeHtml(changeText)}</span>`;
   };
   const currentLabel = escapeHtml(formatPeriodLabel(periodComparison.currentPeriodKey, granularity));
   const previousLabel = periodComparison.previousPeriodKey ? formatPeriodLabel(periodComparison.previousPeriodKey, granularity) : `previous ${granularity}`;
   const yearAgoLabel = periodComparison.yearAgoPeriodKey ? formatPeriodLabel(periodComparison.yearAgoPeriodKey, granularity) : `same ${granularity} last year`;
 
-  return renderReportSection("comparison", title, `<p class="summary-card-detail">${currentLabel}</p><div class="comparison-pairs">${renderComparisonCards(periodComparison.previousPeriodTotals, periodComparison.percentChange, `Vs previous ${granularity}: ${previousLabel}`)}${renderComparisonCards(periodComparison.yearAgoTotals, periodComparison.yearAgoPercentChange, `Vs same ${granularity} last year: ${yearAgoLabel}`)}</div>`);
+  const previousBaseline = `Vs previous ${granularity}: ${previousLabel}`;
+  const yearAgoBaseline = `Vs same ${granularity} last year: ${yearAgoLabel}`;
+  const cards = metrics.map(([label, totalKey, changeKey, formatter]) => (
+    `<article class="comparison-card"><span class="comparison-label">${escapeHtml(label)}</span><strong class="comparison-current">${escapeHtml(formatter(periodComparison.currentPeriodTotals[totalKey]))}</strong>${renderDelta(periodComparison.percentChange, changeKey, previousBaseline)}${renderDelta(periodComparison.yearAgoPercentChange, changeKey, yearAgoBaseline)}</article>`
+  )).join("");
+
+  return renderReportSection("comparison", title, `<p class="summary-card-detail">${currentLabel}</p><div class="comparison-grid">${cards}</div>`);
 }
 
 function renderReportSection(sectionKey, title, content) {
@@ -1334,7 +1337,7 @@ function renderTruncatedSection(title, sectionKey, itemNoun, headers, items, ren
 
 function renderChart(chartKey, title, description, svg, height = 260) {
   const isCollapsed = collapsedCharts.has(chartKey);
-  const toggleLabel = isCollapsed ? `Show ${title}` : `Hide ${title}`;
+  const toggleLabel = isCollapsed ? "Show chart" : "Hide chart";
 
   const content = isCollapsed
     ? ""
@@ -1449,10 +1452,17 @@ function renderRevenueOverTimeChart(report) {
 function renderBreakdownChart(dimension, items) {
   const visible = items.slice(0, TOP_ROW_COUNT);
   const metric = visible.some((item) => item.profit < 0) ? "profit" : "revenue";
+  const viewBoxWidth = 720;
+  const labelPadding = 18;
+  const labelStart = 8;
+  const maximumGutter = Math.floor(viewBoxWidth / 3);
+  const maximumLabelLength = Math.floor((maximumGutter - labelStart - labelPadding) / 8);
   const maximum = Math.max(1, ...visible.map((item) => Math.abs(item[metric])));
-  const widestLabel = Math.max(...visible.map((item) => String(item.value).slice(0, 16).length * 8), 0);
-  const plotStart = Math.min(190, Math.max(70, Math.ceil(widestLabel + 18)));
-  const plotEnd = 620;
+  const widestLabel = Math.max(...visible.map((item) => (
+    String(item.value).slice(0, maximumLabelLength).length * 8
+  )), 0);
+  const plotStart = Math.min(maximumGutter, Math.max(70, Math.ceil(widestLabel + labelStart + labelPadding)));
+  const plotEnd = viewBoxWidth - 16;
   const baseline = metric === "profit" ? (plotStart + plotEnd) / 2 : plotStart;
   const scale = (metric === "profit" ? Math.min(baseline - plotStart, plotEnd - baseline) : plotEnd - plotStart) / maximum;
   const colors = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#2a78d6", "#256abf", "#184f95"];
@@ -1473,9 +1483,9 @@ function renderBreakdownChart(dimension, items) {
       : (inside ? x + barWidth - 6 : x + barWidth + 6);
     const anchor = value < 0 ? (inside ? "start" : "end") : (inside ? "end" : "start");
     const fullLabel = String(item.value);
-    const visibleLabel = chartLabel(fullLabel);
-    const title = visibleLabel === fullLabel ? "" : `<title>${escapeHtml(fullLabel)}</title>`;
-    return `<text x="8" y="${y + 5}" class="chart-label">${title}${chartLabel(item.value)}</text><rect x="${x}" y="${y - 8}" width="${barWidth}" height="16" rx="4" fill="${fill}"></rect><text x="${valueX}" y="${y + 5}" text-anchor="${anchor}" class="chart-value">${escapeHtml(valueLabel)}</text>`;
+    const truncatedLabel = fullLabel.length > maximumLabelLength ? `${fullLabel.slice(0, maximumLabelLength - 1)}…` : fullLabel;
+    const title = truncatedLabel === fullLabel ? "" : `<title>${escapeHtml(fullLabel)}</title>`;
+    return `<text x="${labelStart}" y="${y + 5}" class="chart-label">${title}${escapeHtml(truncatedLabel)}</text><rect x="${x}" y="${y - 8}" width="${barWidth}" height="16" rx="4" fill="${fill}"></rect><text x="${valueX}" y="${y + 5}" text-anchor="${anchor}" class="chart-value">${escapeHtml(valueLabel)}</text>`;
   }).join("");
   const zeroLine = metric === "profit" ? `<line x1="${baseline}" y1="12" x2="${baseline}" y2="${visible.length * 25 + 10}" class="chart-zero"></line>` : "";
   const title = `${dimension.label} ${metric}`;
@@ -1528,13 +1538,35 @@ function renderAlerts(alerts) {
 
 function renderCustomerIntelligence(intelligence) {
   const concentration = `<div class="summary-grid customer-kpis">${intelligence.concentration.map((item) => `<article class="summary-card"><span class="summary-card-label">Top ${item.percent}% of customers</span><strong class="summary-card-value">${formatPercent(item.revenueShare)}</strong><span class="summary-card-detail">of revenue</span></article>`).join("")}</div>`;
-  const atRiskRows = intelligence.atRisk.length
-    ? intelligence.atRisk.map((customer) => `<tr><td>${escapeHtml(customer.value)}</td><td>${formatMoney(customer.revenue)}</td><td>${customer.orderCount.toLocaleString()}</td></tr>`).join("")
-    : '<tr><td colspan="3">No at-risk customers in the previous period.</td></tr>';
-  const unprofitableRows = intelligence.unprofitable.length
-    ? intelligence.unprofitable.slice(0, TOP_ROW_COUNT).map((customer) => `<tr><td>${escapeHtml(customer.value)}</td><td>${formatMoney(customer.profit)}</td><td>${formatMoney(customer.revenue)}</td></tr>`).join("")
-    : '<tr><td colspan="3">No unprofitable customers in this period.</td></tr>';
-  return renderReportSection("customer-intelligence", "Customer intelligence", `${concentration}<div class="intelligence-tables"><div><h4>At-risk customers</h4><p class="summary-card-detail">Top previous-period customers who did not order this period.</p>${renderTable(["Customer", "Previous Revenue", "Previous Orders"], atRiskRows)}</div><div><h4>Unprofitable customers (${intelligence.unprofitable.length.toLocaleString()})</h4>${renderTable(["Customer", "Profit", "Revenue"], unprofitableRows)}</div></div>`);
+  const renderIntelligenceTable = (sectionKey, itemNoun, headers, items, emptyRow, renderRow) => {
+    const isExpanded = expandedSections.has(sectionKey);
+    const visibleItems = isExpanded ? items : items.slice(0, TOP_ROW_COUNT);
+    const rows = items.length ? visibleItems.map(renderRow).join("") : emptyRow;
+    const toggleLabel = isExpanded
+      ? `Show top ${TOP_ROW_COUNT}`
+      : `Show all ${items.length.toLocaleString()} ${itemNoun}`;
+    const toggle = items.length > TOP_ROW_COUNT
+      ? `<button type="button" class="table-toggle" data-section="${escapeHtml(sectionKey)}">${escapeHtml(toggleLabel)}</button>`
+      : "";
+    return `${renderTable(headers, rows)}${toggle}`;
+  };
+  const atRiskTable = renderIntelligenceTable(
+    "at-risk-customers",
+    "customers",
+    ["Customer", "Previous Revenue", "Previous Orders"],
+    intelligence.atRisk,
+    '<tr><td colspan="3">No at-risk customers in the previous period.</td></tr>',
+    (customer) => `<tr><td>${escapeHtml(customer.value)}</td><td>${escapeHtml(formatMoney(customer.revenue))}</td><td>${escapeHtml(customer.orderCount.toLocaleString())}</td></tr>`,
+  );
+  const unprofitableTable = renderIntelligenceTable(
+    "unprofitable-customers",
+    "customers",
+    ["Customer", "Profit", "Revenue"],
+    intelligence.unprofitable,
+    '<tr><td colspan="3">No unprofitable customers in this period.</td></tr>',
+    (customer) => `<tr><td>${escapeHtml(customer.value)}</td><td>${escapeHtml(formatMoney(customer.profit))}</td><td>${escapeHtml(formatMoney(customer.revenue))}</td></tr>`,
+  );
+  return renderReportSection("customer-intelligence", "Customer intelligence", `${concentration}<div class="intelligence-tables"><div><h4>At-risk customers</h4><p class="summary-card-detail">Top previous-period customers who did not order this period.</p>${atRiskTable}</div><div><h4>Unprofitable customers (${intelligence.unprofitable.length.toLocaleString()})</h4>${unprofitableTable}</div></div>`);
 }
 
 function renderRevenueOverTimeTable(report) {

@@ -354,9 +354,6 @@ h1 {
   gap: 0.75rem;
 }
 
-.comparison-pairs { display: grid; gap: 1rem; }
-.comparison-half h4 { margin: 0 0 0.55rem; color: #526058; font-size: 0.9rem; }
-
 .comparison-card {
   padding: 0.85rem;
   border: 1px solid #dce5dd;
@@ -364,7 +361,8 @@ h1 {
   background: #ffffff;
 }
 
-.comparison-values { margin: 0.45rem 0; font-size: 0.84rem; line-height: 1.55; }
+.comparison-current { display: block; margin: 0.45rem 0; color: #252825; font-size: 1.05rem; }
+.comparison-delta { display: block; margin-top: 0.32rem; font-size: 0.78rem; line-height: 1.35; }
 .change-positive { color: #285f3b; font-weight: 750; }
 .change-negative { color: #8b3f45; font-weight: 750; }
 .change-neutral { color: #6a766e; font-weight: 700; }
