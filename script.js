@@ -783,10 +783,10 @@ function handleChartPointerMove(event) {
   const location = point.matrixTransform(svg.getScreenCTM().inverse());
   const index = Math.max(0, Math.min(
     currentReport.revenueByPeriod.length - 1,
-    Math.round(((location.x - 42) / 645) * (currentReport.revenueByPeriod.length - 1)),
+    Math.round(((location.x - 42) / 638) * (currentReport.revenueByPeriod.length - 1)),
   ));
   const period = currentReport.revenueByPeriod[index];
-  const x = 42 + (index / Math.max(currentReport.revenueByPeriod.length - 1, 1)) * 645;
+  const x = 42 + (index / Math.max(currentReport.revenueByPeriod.length - 1, 1)) * 638;
   const y = 22 + 175 - (period.revenue / Math.max(...currentReport.revenueByPeriod.map((item) => item.revenue), 1)) * 175;
   const crosshair = chart.querySelector(".chart-crosshair");
   const tooltip = chart.querySelector(".chart-tooltip");
@@ -806,16 +806,10 @@ function hideChartCrosshair() {
   });
 }
 
-function getReportSectionKeys(report) {
-  return [
-    "alerts",
-    "summary",
-    "revenue-over-time",
-    "comparison",
-    ...DIMENSIONS.filter((dimension) => report.breakdowns[dimension.key]).map(
-      (dimension) => dimension.key,
-    ),
-  ];
+function getRenderedReportSectionKeys() {
+  return [...reportOutput.querySelectorAll("[data-report-section]")].map(
+    (toggle) => toggle.dataset.reportSection,
+  );
 }
 
 function updateSectionToggleLabel() {
@@ -823,7 +817,7 @@ function updateSectionToggleLabel() {
     return;
   }
 
-  const sectionKeys = getReportSectionKeys(currentReport);
+  const sectionKeys = getRenderedReportSectionKeys();
   const allCollapsed = sectionKeys.length > 0 && sectionKeys.every(
     (section) => collapsedReportSections.has(section),
   );
@@ -835,7 +829,7 @@ function toggleAllReportSections() {
     return;
   }
 
-  const sectionKeys = getReportSectionKeys(currentReport);
+  const sectionKeys = getRenderedReportSectionKeys();
   const allCollapsed = sectionKeys.every((section) => collapsedReportSections.has(section));
 
   if (allCollapsed) {
@@ -1189,10 +1183,12 @@ function escapeHtml(value) {
 }
 
 function formatMoney(value) {
-  return `$${Number(value).toLocaleString(undefined, {
+  const amount = Number(value);
+  const formatted = Math.abs(amount).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  })}`;
+  });
+  return `${amount < 0 ? "-" : ""}$${formatted}`;
 }
 
 function formatPercent(value) {
@@ -1314,7 +1310,7 @@ function renderChart(chartKey, title, description, svg, height = 260) {
   return `<div class="chart-wrap ${isCollapsed ? "is-collapsed" : ""}"><div class="chart-heading"><h4>${escapeHtml(title)}</h4><button type="button" class="chart-toggle" data-chart="${escapeHtml(chartKey)}" aria-expanded="${String(!isCollapsed)}">${escapeHtml(toggleLabel)}</button></div>${content}</div>`;
 }
 
-function chartLabel(value, length = 22) {
+function chartLabel(value, length = 16) {
   const label = String(value);
   return escapeHtml(label.length > length ? `${label.slice(0, length - 1)}…` : label);
 }
@@ -1323,18 +1319,33 @@ function renderDiscountMarginChart(items) {
   const bands = [...items].sort((first, second) => (
     Number.parseFloat(first.value) - Number.parseFloat(second.value)
   ));
+  const viewBoxWidth = 720;
+  const leftGutter = 60;
+  const rightGutter = 90;
+  const plotStart = leftGutter;
+  const plotEnd = viewBoxWidth - rightGutter;
+  const zeroX = (plotStart + plotEnd) / 2;
   const maximum = Math.max(10, ...bands.map((item) => Math.abs(item.margin)));
-  const zeroX = 315;
-  const scale = 330 / maximum;
+  const scale = Math.min(zeroX - plotStart, plotEnd - zeroX) / maximum;
   const rows = bands.map((item, index) => {
     const y = 28 + index * 24;
     const width = Math.abs(item.margin) * scale;
     const x = item.margin < 0 ? zeroX - width : zeroX;
-    const labelX = item.margin < 0 ? x - 7 : x + width + 7;
-    const anchor = item.margin < 0 ? "end" : "start";
     const percent = `${Number.parseFloat(item.value).toFixed(0)}%`;
+    const valueLabel = formatPercent(item.margin);
+    const labelWidth = valueLabel.length * 7;
+    const outsideFits = item.margin < 0
+      ? x - 7 - labelWidth >= plotStart
+      : x + width + 7 + labelWidth <= plotEnd;
+    const inside = !outsideFits;
+    const labelX = item.margin < 0
+      ? (inside ? x + 6 : x - 7)
+      : (inside ? x + width - 6 : x + width + 7);
+    const anchor = item.margin < 0
+      ? (inside ? "start" : "end")
+      : (inside ? "end" : "start");
     const bar = `<rect x="${x}" y="${y - 8}" width="${width}" height="16" rx="4" fill="${item.margin < 0 ? "#e34948" : "#2a78d6"}"></rect>`;
-    return `<text x="8" y="${y + 5}" class="chart-label">${escapeHtml(percent)}</text>${bar}<text x="${labelX}" y="${y + 5}" text-anchor="${anchor}" class="chart-value">${escapeHtml(formatPercent(item.margin))}</text>`;
+    return `<text x="8" y="${y + 5}" class="chart-label">${escapeHtml(percent)}</text>${bar}<text x="${labelX}" y="${y + 5}" text-anchor="${anchor}" class="chart-value">${escapeHtml(valueLabel)}</text>`;
   }).join("");
   const height = Math.max(260, bands.length * 24 + 40);
 
@@ -1352,7 +1363,7 @@ function renderRevenueOverTimeChart(report) {
   const maximum = Math.max(...points.map((point) => point.revenue), 1);
   const left = 42;
   const top = 22;
-  const width = 645;
+  const width = 638;
   const height = 175;
   const pointMarkup = points.map((point, index) => {
     const x = left + (index / Math.max(points.length - 1, 1)) * width;
@@ -1366,7 +1377,7 @@ function renderRevenueOverTimeChart(report) {
     return `<circle cx="${point.x}" cy="${point.y}" r="2.5" fill="#2a78d6"><title>${escapeHtml(label)}</title></circle>`;
   }).join("");
   const selectedMarkup = selected ? `<circle cx="${selected.x}" cy="${selected.y}" r="5" fill="#2a78d6"></circle><text x="${Math.min(selected.x + 9, 600)}" y="${selected.y - 9}" class="chart-value">${escapeHtml(formatMoney(selected.revenue))}</text>` : "";
-  const labels = pointMarkup.filter((point, index) => index === 0 || index === pointMarkup.length - 1 || index % Math.ceil(pointMarkup.length / 6) === 0).map((point) => `<text x="${point.x}" y="220" text-anchor="middle" class="chart-label">${escapeHtml(formatPeriodLabel(point.key, report.granularity))}</text>`).join("");
+  const labels = pointMarkup.filter((point, index) => index === 0 || index === pointMarkup.length - 1 || index % Math.ceil(pointMarkup.length / 6) === 0).map((point, index, selectedPoints) => `<text x="${point.x}" y="220" text-anchor="${index === selectedPoints.length - 1 ? "end" : "middle"}" class="chart-label">${escapeHtml(formatPeriodLabel(point.key, report.granularity))}</text>`).join("");
   const axes = `<line x1="${left}" y1="${top + height}" x2="${left + width}" y2="${top + height}" class="chart-axis"></line><line x1="${left}" y1="${top + height / 2}" x2="${left + width}" y2="${top + height / 2}" class="chart-grid"></line>`;
   const chartLine = `<path d="${path}" fill="none" stroke="#2a78d6" stroke-width="2"></path>`;
   const hoverMarkup = '<line y1="22" y2="197" class="chart-crosshair" hidden></line><text class="chart-tooltip" hidden></text>';
@@ -1383,8 +1394,11 @@ function renderBreakdownChart(dimension, items) {
   const visible = items.slice(0, TOP_ROW_COUNT);
   const metric = visible.some((item) => item.profit < 0) ? "profit" : "revenue";
   const maximum = Math.max(1, ...visible.map((item) => Math.abs(item[metric])));
-  const baseline = metric === "profit" ? 310 : 180;
-  const scale = (metric === "profit" ? 280 : 410) / maximum;
+  const widestLabel = Math.max(...visible.map((item) => String(item.value).slice(0, 16).length * 8), 0);
+  const plotStart = Math.min(190, Math.max(70, Math.ceil(widestLabel + 18)));
+  const plotEnd = 620;
+  const baseline = metric === "profit" ? (plotStart + plotEnd) / 2 : plotStart;
+  const scale = (metric === "profit" ? Math.min(baseline - plotStart, plotEnd - baseline) : plotEnd - plotStart) / maximum;
   const colors = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#2a78d6", "#256abf", "#184f95"];
   const bars = visible.map((item, index) => {
     const y = 27 + index * 25;
@@ -1392,9 +1406,22 @@ function renderBreakdownChart(dimension, items) {
     const barWidth = Math.abs(value) * scale;
     const x = value < 0 ? baseline - barWidth : baseline;
     const fill = metric === "profit" ? (value < 0 ? "#e34948" : "#2a78d6") : colors[Math.round((index / Math.max(visible.length - 1, 1)) * (colors.length - 1))];
-    return `<text x="8" y="${y + 5}" class="chart-label">${chartLabel(item.value)}</text><rect x="${x}" y="${y - 8}" width="${barWidth}" height="16" rx="4" fill="${fill}"></rect><text x="${value < 0 ? x - 6 : x + barWidth + 6}" y="${y + 5}" text-anchor="${value < 0 ? "end" : "start"}" class="chart-value">${escapeHtml(formatMoney(value))}</text>`;
+    const valueLabel = formatMoney(value);
+    const labelWidth = valueLabel.length * 7;
+    const outsideFits = value < 0
+      ? x - 6 - labelWidth >= plotStart
+      : x + barWidth + 6 + labelWidth <= plotEnd;
+    const inside = !outsideFits;
+    const valueX = value < 0
+      ? (inside ? x + 6 : x - 6)
+      : (inside ? x + barWidth - 6 : x + barWidth + 6);
+    const anchor = value < 0 ? (inside ? "start" : "end") : (inside ? "end" : "start");
+    const fullLabel = String(item.value);
+    const visibleLabel = chartLabel(fullLabel);
+    const title = visibleLabel === fullLabel ? "" : `<title>${escapeHtml(fullLabel)}</title>`;
+    return `<text x="8" y="${y + 5}" class="chart-label">${title}${chartLabel(item.value)}</text><rect x="${x}" y="${y - 8}" width="${barWidth}" height="16" rx="4" fill="${fill}"></rect><text x="${valueX}" y="${y + 5}" text-anchor="${anchor}" class="chart-value">${escapeHtml(valueLabel)}</text>`;
   }).join("");
-  const zeroLine = metric === "profit" ? `<line x1="${baseline}" y1="12" x2="${baseline}" y2="${visible.length * 25 + 20}" class="chart-zero"></line>` : "";
+  const zeroLine = metric === "profit" ? `<line x1="${baseline}" y1="12" x2="${baseline}" y2="${visible.length * 25 + 10}" class="chart-zero"></line>` : "";
   const title = `${dimension.label} ${metric}`;
 
   return renderChart(
