@@ -783,11 +783,13 @@ function handleChartPointerMove(event) {
   const location = point.matrixTransform(svg.getScreenCTM().inverse());
   const index = Math.max(0, Math.min(
     currentReport.revenueByPeriod.length - 1,
-    Math.round(((location.x - 42) / 638) * (currentReport.revenueByPeriod.length - 1)),
+    Math.round(((location.x - 58) / 622) * (currentReport.revenueByPeriod.length - 1)),
   ));
   const period = currentReport.revenueByPeriod[index];
-  const x = 42 + (index / Math.max(currentReport.revenueByPeriod.length - 1, 1)) * 638;
-  const y = 22 + 175 - (period.revenue / Math.max(...currentReport.revenueByPeriod.map((item) => item.revenue), 1)) * 175;
+  const x = 58 + (index / Math.max(currentReport.revenueByPeriod.length - 1, 1)) * 622;
+  const maximum = Math.max(...currentReport.revenueByPeriod.map((item) => item.revenue), 1);
+  const axisMaximum = niceChartTickSize(maximum / 3) * Math.ceil(maximum / niceChartTickSize(maximum / 3));
+  const y = 22 + 175 - (period.revenue / axisMaximum) * 175;
   const crosshair = chart.querySelector(".chart-crosshair");
   const tooltip = chart.querySelector(".chart-tooltip");
 
@@ -1191,6 +1193,24 @@ function formatMoney(value) {
   return `${amount < 0 ? "-" : ""}$${formatted}`;
 }
 
+function formatCompactMoney(value) {
+  const amount = Math.round(Number(value));
+
+  if (Math.abs(amount) >= 1000) {
+    return `$${Math.round(amount / 1000)}k`;
+  }
+
+  return `$${amount}`;
+}
+
+function niceChartTickSize(value) {
+  const exponent = 10 ** Math.floor(Math.log10(Math.max(value, 1)));
+  const fraction = value / exponent;
+  const roundedFraction = fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10;
+
+  return roundedFraction * exponent;
+}
+
 function formatPercent(value) {
   return `${Number(value).toFixed(1)}%`;
 }
@@ -1325,11 +1345,21 @@ function renderDiscountMarginChart(items) {
   const plotStart = leftGutter;
   const plotEnd = viewBoxWidth - rightGutter;
   const zeroX = (plotStart + plotEnd) / 2;
-  const maximum = Math.max(10, ...bands.map((item) => Math.abs(item.margin)));
+  const absoluteMargins = bands.map((item) => Math.abs(item.margin)).sort((first, second) => first - second);
+  const percentilePosition = (absoluteMargins.length - 1) * 0.95;
+  const percentileIndex = Math.floor(percentilePosition);
+  const percentileFraction = percentilePosition - percentileIndex;
+  const percentileMaximum = absoluteMargins.length
+    ? absoluteMargins[percentileIndex] + (
+      (absoluteMargins[Math.min(percentileIndex + 1, absoluteMargins.length - 1)] - absoluteMargins[percentileIndex]) * percentileFraction
+    )
+    : 0;
+  const maximum = Math.max(10, Math.ceil(percentileMaximum / 10) * 10);
   const scale = Math.min(zeroX - plotStart, plotEnd - zeroX) / maximum;
   const rows = bands.map((item, index) => {
     const y = 28 + index * 24;
-    const width = Math.abs(item.margin) * scale;
+    const isOverflow = Math.abs(item.margin) >= maximum;
+    const width = Math.min(Math.abs(item.margin), maximum) * scale;
     const x = item.margin < 0 ? zeroX - width : zeroX;
     const percent = `${Number.parseFloat(item.value).toFixed(0)}%`;
     const valueLabel = formatPercent(item.margin);
@@ -1344,14 +1374,20 @@ function renderDiscountMarginChart(items) {
     const anchor = item.margin < 0
       ? (inside ? "start" : "end")
       : (inside ? "end" : "start");
-    const bar = `<rect x="${x}" y="${y - 8}" width="${width}" height="16" rx="4" fill="${item.margin < 0 ? "#e34948" : "#2a78d6"}"></rect>`;
-    return `<text x="8" y="${y + 5}" class="chart-label">${escapeHtml(percent)}</text>${bar}<text x="${labelX}" y="${y + 5}" text-anchor="${anchor}" class="chart-value">${escapeHtml(valueLabel)}</text>`;
+    const fill = item.margin < 0 ? "#e34948" : "#2a78d6";
+    const bar = `<rect x="${x}" y="${y - 8}" width="${width}" height="16" rx="4" fill="${fill}"></rect>`;
+    const overflow = isOverflow
+      ? (item.margin < 0
+        ? `<polygon points="${plotStart},${y} ${plotStart + 10},${y - 8} ${plotStart + 10},${y + 8}" fill="${fill}"></polygon>`
+        : `<polygon points="${plotEnd},${y} ${plotEnd - 10},${y - 8} ${plotEnd - 10},${y + 8}" fill="${fill}"></polygon>`)
+      : "";
+    return `<text x="8" y="${y + 5}" class="chart-label">${escapeHtml(percent)}</text>${bar}${overflow}<text x="${labelX}" y="${y + 5}" text-anchor="${anchor}" class="chart-value">${escapeHtml(valueLabel)}</text>`;
   }).join("");
   const height = Math.max(260, bands.length * 24 + 40);
 
   return renderChart(
     "discount-margin",
-    "Discount vs margin",
+    "Discount vs margin, by discount level",
     "Margin by discount band, showing positive margin in blue and negative margin in red.",
     `<line x1="${zeroX}" y1="12" x2="${zeroX}" y2="${height - 12}" class="chart-zero"></line>${rows}`,
     height,
@@ -1361,13 +1397,15 @@ function renderDiscountMarginChart(items) {
 function renderRevenueOverTimeChart(report) {
   const points = report.revenueByPeriod;
   const maximum = Math.max(...points.map((point) => point.revenue), 1);
-  const left = 42;
+  const tickSize = niceChartTickSize(maximum / 3);
+  const axisMaximum = tickSize * Math.ceil(maximum / tickSize);
+  const left = 58;
   const top = 22;
-  const width = 638;
+  const width = 622;
   const height = 175;
   const pointMarkup = points.map((point, index) => {
     const x = left + (index / Math.max(points.length - 1, 1)) * width;
-    const y = top + height - (point.revenue / maximum) * height;
+    const y = top + height - (point.revenue / axisMaximum) * height;
     return { ...point, x, y };
   });
   const selected = pointMarkup.find((point) => point.key === report.periodKey);
@@ -1378,7 +1416,12 @@ function renderRevenueOverTimeChart(report) {
   }).join("");
   const selectedMarkup = selected ? `<circle cx="${selected.x}" cy="${selected.y}" r="5" fill="#2a78d6"></circle><text x="${Math.min(selected.x + 9, 600)}" y="${selected.y - 9}" class="chart-value">${escapeHtml(formatMoney(selected.revenue))}</text>` : "";
   const labels = pointMarkup.filter((point, index) => index === 0 || index === pointMarkup.length - 1 || index % Math.ceil(pointMarkup.length / 6) === 0).map((point, index, selectedPoints) => `<text x="${point.x}" y="220" text-anchor="${index === selectedPoints.length - 1 ? "end" : "middle"}" class="chart-label">${escapeHtml(formatPeriodLabel(point.key, report.granularity))}</text>`).join("");
-  const axes = `<line x1="${left}" y1="${top + height}" x2="${left + width}" y2="${top + height}" class="chart-axis"></line><line x1="${left}" y1="${top + height / 2}" x2="${left + width}" y2="${top + height / 2}" class="chart-grid"></line>`;
+  const yTicks = Array.from({ length: 4 }, (_, index) => {
+    const value = axisMaximum * (index / 3);
+    const y = top + height - (value / axisMaximum) * height;
+    return `<line x1="${left}" y1="${y}" x2="${left + width}" y2="${y}" class="chart-grid"></line><text x="${left - 8}" y="${y + 4}" text-anchor="end" class="chart-label">${escapeHtml(formatCompactMoney(value))}</text>`;
+  }).join("");
+  const axes = `${yTicks}<line x1="${left}" y1="${top + height}" x2="${left + width}" y2="${top + height}" class="chart-axis"></line>`;
   const chartLine = `<path d="${path}" fill="none" stroke="#2a78d6" stroke-width="2"></path>`;
   const hoverMarkup = '<line y1="22" y2="197" class="chart-crosshair" hidden></line><text class="chart-tooltip" hidden></text>';
 
