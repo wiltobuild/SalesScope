@@ -279,6 +279,19 @@ h1 {
 .history-upload-meta { margin: 0.2rem 0 0; color: #6a766e; font-size: 0.8rem; }
 .history-upload button { padding: 0.5rem 0.75rem; border: 1px solid #34734a; border-radius: 0.4rem; color: #285f3b; background: #fff; cursor: pointer; font: inherit; font-weight: 700; }
 .history-upload button:hover { color: #fff; background: #34734a; }
+.history-upload-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.history-upload .history-delete { border-color: #c8a9ac; color: #8b3f45; }
+.history-upload .history-delete:hover { color: #fff; background: #a4474f; }
+.history-upload .history-delete-confirm { border-color: #a4474f; color: #fff; background: #a4474f; }
+.history-upload .history-delete-cancel { border-color: #c3c2b7; color: #52514e; font-weight: 400; }
+.history-upload .history-delete-cancel:hover { color: #fff; background: #6a766e; }
+.trend-details { padding: 0.75rem; border: 1px solid #dce5dd; border-radius: 10px; background: #fafbfa; }
+.trend-summary { cursor: pointer; font-weight: 700; font-size: 0.95rem; }
+.trend-summary::marker { color: #6a766e; }
+.trend-count { margin-left: 0.4rem; color: #6a766e; font-weight: 400; font-size: 0.82rem; }
+.trend-details[open] .trend-summary { margin-bottom: 0.5rem; }
+.trend-row-toggle { margin-top: 0.65rem; padding: 0.45rem 0.7rem; border: 1px solid #c8d3ca; border-radius: 0.4rem; color: #285f3b; background: #fff; cursor: pointer; font: inherit; font-size: 0.82rem; font-weight: 700; }
+.trend-row-toggle:hover { color: #fff; background: #34734a; }
 .trend-heading { margin: 0.5rem 0 0; font-size: 0.95rem; }
 .trend-note { margin: 0; color: #6a766e; font-size: 0.82rem; }
 .trend-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }

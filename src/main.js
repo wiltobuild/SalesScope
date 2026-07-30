@@ -30,6 +30,7 @@ const historyStatus = document.querySelector("#history-status");
 const uploadHistory = document.querySelector("#upload-history");
 const uploadTrends = document.querySelector("#upload-trends");
 const initialReportHeadingHint = reportHeadingHint.textContent;
+const TREND_PREVIEW_ROWS = 12;
 const state = createAppState();
 
 salesFileInput.addEventListener("change", handleFileInputChange);
@@ -46,6 +47,7 @@ reportOutput.addEventListener("input", handleReportOutputInput);
 reportOutput.addEventListener("pointermove", handleChartPointerMove);
 reportOutput.addEventListener("pointerleave", hideChartCrosshair);
 uploadHistory.addEventListener("click", handleUploadHistoryClick);
+uploadTrends.addEventListener("click", handleUploadTrendsClick);
 loadUploadHistory();
 
 function resetApp() {
@@ -183,7 +185,9 @@ async function loadUploadHistory() {
     const { uploads } = await response.json();
     historyPanel.hidden = false;
     historyStatus.textContent = uploads.length ? "Saved on this server." : "Reports you generate here will be saved on this server.";
-    uploadHistory.innerHTML = uploads.map((upload) => `<article class="history-upload"><div><div class="history-upload-name">${escapeHtml(upload.name)}</div><p class="history-upload-meta">${upload.rowCount.toLocaleString()} rows · ${escapeHtml(new Date(upload.uploadedAt).toLocaleDateString())}</p></div><button type="button" data-load-upload="${upload.id}" data-upload-name="${escapeHtml(upload.name)}" data-upload-period="${escapeHtml(upload.latestPeriod || "")}">Load latest report</button></article>`).join("");
+    uploadHistory.innerHTML = uploads.map((upload) => `<article class="history-upload"><div><div class="history-upload-name">${escapeHtml(upload.name)}</div><p class="history-upload-meta">${upload.rowCount.toLocaleString()} rows · ${escapeHtml(new Date(upload.uploadedAt).toLocaleDateString())}</p></div><div class="history-upload-actions"><button type="button" data-load-upload="${upload.id}" data-upload-name="${escapeHtml(upload.name)}" data-upload-period="${escapeHtml(upload.latestPeriod || "")}">Load latest report</button>${state.pendingDeleteUploadId === String(upload.id)
+      ? `<button type="button" class="history-delete history-delete-confirm" data-confirm-delete="${upload.id}">Delete permanently</button><button type="button" class="history-delete-cancel" data-cancel-delete>Cancel</button>`
+      : `<button type="button" class="history-delete" data-delete-upload="${upload.id}">Delete</button>`}</div></article>`).join("");
     loadUploadTrends();
   } catch { historyPanel.hidden = true; }
 }
@@ -194,13 +198,50 @@ async function loadUploadTrends() {
     if (!response.ok) return;
     const trends = await response.json();
     if (!trends.periods.length) { uploadTrends.innerHTML = ""; return; }
+    // Every shared month at once pushed the report itself several screens down,
+    // so this opens closed and shows only the most recent months until asked.
+    const visiblePeriods = state.trendRowsExpanded ? trends.periods : trends.periods.slice(-TREND_PREVIEW_ROWS);
     const headings = trends.uploads.map((upload) => `<th scope="col">${escapeHtml(upload.name)}</th>`).join("");
-    const rows = trends.periods.map((period) => `<tr><th scope="row">${escapeHtml(formatPeriodLabel(period.key, "month"))}</th>${trends.uploads.map((upload) => `<td>${formatMoney(period.revenueByUpload[upload.id])}</td>`).join("")}</tr>`).join("");
-    uploadTrends.innerHTML = `<h3 class="trend-heading">Revenue across uploads</h3><p class="trend-note">Months shown occur in at least two saved uploads.</p><div class="table-wrap"><table class="trend-table"><thead><tr><th scope="col">Month</th>${headings}</tr></thead><tbody>${rows}</tbody></table></div>`;
+    const rows = visiblePeriods.map((period) => `<tr><th scope="row">${escapeHtml(formatPeriodLabel(period.key, "month"))}</th>${trends.uploads.map((upload) => `<td>${formatMoney(period.revenueByUpload[upload.id])}</td>`).join("")}</tr>`).join("");
+    const monthLabel = `${trends.periods.length} shared month${trends.periods.length === 1 ? "" : "s"}`;
+    const rowToggle = trends.periods.length > TREND_PREVIEW_ROWS
+      ? `<button type="button" class="trend-row-toggle" data-toggle-trend-rows>${state.trendRowsExpanded ? `Show ${TREND_PREVIEW_ROWS} most recent` : `Show all ${trends.periods.length} months`}</button>`
+      : "";
+    uploadTrends.innerHTML = `<details class="trend-details"${state.trendsExpanded ? " open" : ""}><summary class="trend-summary">Revenue across uploads <span class="trend-count">${monthLabel}</span></summary><p class="trend-note">Months shown occur in at least two saved uploads.</p><div class="table-wrap"><table class="trend-table"><thead><tr><th scope="col">Month</th>${headings}</tr></thead><tbody>${rows}</tbody></table></div>${rowToggle}</details>`;
+    // "toggle" does not bubble, so delegation on the container cannot see it.
+    uploadTrends.querySelector(".trend-details").addEventListener("toggle", (event) => { state.trendsExpanded = event.target.open; });
   } catch { uploadTrends.innerHTML = ""; }
 }
 
+function handleUploadTrendsClick(event) {
+  if (!event.target.closest("[data-toggle-trend-rows]")) return;
+  state.trendRowsExpanded = !state.trendRowsExpanded;
+  loadUploadTrends();
+}
+
 async function handleUploadHistoryClick(event) {
+  // Deleting a saved upload cannot be undone, so the first click only arms the
+  // second one rather than destroying rows outright.
+  const askDelete = event.target.closest("[data-delete-upload]");
+  if (askDelete) { state.pendingDeleteUploadId = askDelete.dataset.deleteUpload; loadUploadHistory(); return; }
+  if (event.target.closest("[data-cancel-delete]")) { state.pendingDeleteUploadId = null; loadUploadHistory(); return; }
+
+  const confirmDelete = event.target.closest("[data-confirm-delete]");
+  if (confirmDelete) {
+    const uploadId = confirmDelete.dataset.confirmDelete;
+    confirmDelete.disabled = true;
+    try {
+      const response = await fetch(`/api/uploads/${encodeURIComponent(uploadId)}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("Unable to delete that saved upload.");
+      // The open report came from rows that no longer exist, so stop treating it
+      // as stored; the period controls would otherwise re-request a dead upload.
+      if (state.persistedUploadId === uploadId) { state.persistedUploadId = null; state.isStoredReport = false; }
+      state.pendingDeleteUploadId = null;
+      await loadUploadHistory();
+    } catch (error) { historyStatus.textContent = error.message; confirmDelete.disabled = false; }
+    return;
+  }
+
   const button = event.target.closest("[data-load-upload]");
   if (!button || !button.dataset.uploadPeriod) return;
   button.disabled = true;

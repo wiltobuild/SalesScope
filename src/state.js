@@ -5,6 +5,7 @@ function createAppState() {
     selectedGranularity: "month", selectedPeriodKey: null, availableDimensionKeys: new Set(),
     expandedSections: new Set(), collapsedReportSections: new Set(), collapsedCharts: new Set(),
     tableSorts: new Map(), tableSearches: new Map(), focusFilters: new Map(),
+    trendsExpanded: false, trendRowsExpanded: false, pendingDeleteUploadId: null,
   };
 }
 
