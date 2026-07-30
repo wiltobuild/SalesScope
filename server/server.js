@@ -4,7 +4,7 @@ import { resolve, relative, extname, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { DIMENSIONS } from "../src/dimensions.js";
-import { buildReport } from "../src/report.js";
+import { buildReport, getSortedPeriodKeys } from "../src/report.js";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(moduleDirectory, "..");
@@ -216,7 +216,7 @@ function staticPathFor(rawPath) {
   try {
     pathname = decodeURIComponent(encodedPath);
   } catch {
-    return { error: "Invalid URL encoding." };
+    return { badRequest: "Invalid URL encoding." };
   }
 
   if (pathname.split("/").some((part) => part === "." || part === ".." || part.includes("\\"))) {
@@ -244,6 +244,10 @@ function staticPathFor(rawPath) {
 
 async function serveStatic(request, response) {
   const staticPath = staticPathFor(request.url || "/");
+  if (staticPath.badRequest) {
+    sendError(response, 400, staticPath.badRequest);
+    return;
+  }
   if (staticPath.forbidden) {
     sendError(response, 403, staticPath.forbidden);
     return;
@@ -310,9 +314,41 @@ function createAppServer(database) {
       }
 
       if (request.method === "GET" && url.pathname === "/api/uploads") {
-        const uploads = database.prepare("SELECT id, name, source, uploaded_at, row_count FROM uploads ORDER BY uploaded_at DESC, id DESC").all()
-          .map((upload) => ({ id: upload.id, name: upload.name, source: upload.source, uploadedAt: upload.uploaded_at, rowCount: upload.row_count }));
+        const uploads = database.prepare(`
+          SELECT uploads.id, uploads.name, uploads.source, uploads.uploaded_at, uploads.row_count,
+            substr(MAX(rows.date), 1, 7) AS latest_period
+          FROM uploads LEFT JOIN rows ON rows.upload_id = uploads.id
+          GROUP BY uploads.id
+          ORDER BY uploads.uploaded_at DESC, uploads.id DESC
+        `).all().map((upload) => ({ id: upload.id, name: upload.name, source: upload.source,
+          uploadedAt: upload.uploaded_at, rowCount: upload.row_count, latestPeriod: upload.latest_period }));
         sendJson(response, 200, { uploads });
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/uploads/trends") {
+        const trendRows = database.prepare(`
+          SELECT upload_id, substr(date, 1, 7) AS period, SUM(revenue) AS revenue
+          FROM rows
+          GROUP BY upload_id, period
+          ORDER BY period, upload_id
+        `).all();
+        const byPeriod = new Map();
+        trendRows.forEach((row) => {
+          if (!byPeriod.has(row.period)) byPeriod.set(row.period, []);
+          byPeriod.get(row.period).push({ uploadId: Number(row.upload_id), revenue: row.revenue });
+        });
+        const periods = [...byPeriod.entries()]
+          .filter(([, values]) => values.length >= 2)
+          .map(([key, values]) => ({
+            key,
+            revenueByUpload: Object.fromEntries(values.map((value) => [value.uploadId, value.revenue])),
+          }));
+        const uploadIds = new Set(periods.flatMap((period) => Object.keys(period.revenueByUpload)));
+        const uploads = uploadIds.size
+          ? database.prepare("SELECT id, name FROM uploads WHERE id IN (" + [...uploadIds].map(() => "?").join(", ") + ") ORDER BY id").all(...uploadIds)
+          : [];
+        sendJson(response, 200, { granularity: "month", uploads, periods });
         return;
       }
 
@@ -332,7 +368,15 @@ function createAppServer(database) {
         const rows = database.prepare("SELECT * FROM rows WHERE upload_id = ? ORDER BY date").all(uploadId).map(rowFromDatabase);
         // This is deliberately the browser's report module, keeping server and client figures identical.
         const report = buildReport(rows, { granularity, periodKey }, { availableDimensionKeys: availableDimensions(rows) });
-        sendJson(response, 200, report);
+        // A stored report has no browser-side row set. Return the selectable periods
+        // so its controls behave exactly like reports generated in the browser.
+        sendJson(response, 200, {
+          ...report,
+          periodKeysByGranularity: {
+            month: getSortedPeriodKeys(rows, "month"),
+            week: getSortedPeriodKeys(rows, "week"),
+          },
+        });
         return;
       }
 

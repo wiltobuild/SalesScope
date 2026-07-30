@@ -8,7 +8,7 @@ When available, SalesScope also uses `Category`, `Sub-Category`, `Region`, `Stat
 
 ## Run locally
 
-For development, serve or open `index.html` in a modern web browser. There are three ways to get data in:
+For the full app, run `npm start` and open `http://localhost:3000` in a modern web browser. There are three ways to get data in:
 
 - **Upload a file** - any CSV/XLS/XLSX with the columns above. Try `sample-sales-data.csv`.
 - **Load Superstore Data** - the bundled Kaggle Superstore dataset (9,994 rows, 2014–2017), read instantly from `superstore-data.js`. Works offline.
@@ -16,9 +16,15 @@ For development, serve or open `index.html` in a modern web browser. There are t
 
 The period controls default to the latest month and switch between month and week without re-uploading. The report includes product, customer, promotion, and any available optional-dimension breakdowns. Tables start with the top 10 by revenue, can expand, and can be sorted by their columns; product and customer tables also have name search. Downloads always include all rows and sections.
 
+## Saved history and trends
+
+When SalesScope is run with `npm start`, each generated upload is saved to the local backend. The **Saved uploads** panel lets you reload the latest monthly report for a prior upload and, when two or more uploads include the same month, compares their revenue for those shared months.
+
 ## Offline demo
 
 Build the self-contained `file://` demo with `node tools/build-demo.mjs` (or `npm run build:demo`). Open `demo/index.html` directly from disk, then select **Load Superstore Data** and **Generate Report**. The generated directory is intentionally ignored by Git.
+
+The offline demo and a static host such as GitHub Pages cannot run the Node backend. They therefore cannot save uploads, show saved-upload history, reload stored reports, or provide revenue-across-uploads trends. The file upload, bundled data, live Kaggle fetch (when online), report generation, and CSV download still work entirely in the browser.
 
 Click a breakdown row to focus the full report on that value; focus chips can be removed, and period changes or Reset clear them. Report sections are collapsible (expanded by default), with a Collapse all / Expand all control. Charts are likewise shown by default and can be hidden for a compact text-only brief.
 
@@ -56,18 +62,19 @@ The palette is validated for the report surface: categorical data uses blue, ora
 ## How it works
 
 - `index.html` / `style.css` - page structure and the design system.
-- `script.js` - everything else, in order: data sources (upload, embedded, live API fetch) + validation, SheetJS parsing/normalization, grouping helpers, report calculations (`buildReport`), rendering (`renderReport`), CSV export (`buildReportCsv`), and reset.
+- `src/` - browser modules for data sources, parsing/normalization, report calculations, rendering, charts, CSV export, and app state.
+- `server/server.js` - the zero-dependency local server and SQLite persistence API used for saved history and trends.
 - `superstore-data.js` - the bundled offline copy of the dataset, generated - do not edit by hand.
 - `Superstore.csv` - the raw Kaggle download, kept as the converter's input.
 - `tools/build-superstore-data.mjs` - converts the Windows-1252 source CSV into `superstore-data.js`.
 - `tools/refresh-superstore.mjs` - re-downloads from the Kaggle API and regenerates the bundled copy. Run with `node tools/refresh-superstore.mjs`. It validates row count, order count and total sales before overwriting anything, so a failed download cannot destroy a working dataset.
 
-No backend, framework, or build step - just static files and SheetJS via CDN.
+No framework or npm dependencies. The full local app uses Node's built-in HTTP and SQLite modules; the generated offline demo is static.
 
 ## Scope
 
 The MVP shipped a weekly report over uploaded data. Since then the app gained the full Superstore dimension set, year-over-year comparison, charts, drill-down and customer intelligence, so it is no longer an MVP - charts and live data connections have both moved from "out of scope" to shipped.
 
-Still deliberately out of scope: accounts, cloud storage/persistence, manager dashboards, forecasting, and sharing integrations.
+Still deliberately out of scope: accounts, cloud storage, manager dashboards, forecasting, sharing integrations, and AI-assisted analysis.
 
 One known limitation worth stating plainly: the bundled dataset is a fixed historical extract covering 2014-2017. The API integration is real, but the data behind it does not change.

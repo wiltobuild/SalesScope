@@ -25,6 +25,10 @@ const granularitySelect = document.querySelector("#granularity-select");
 const periodSelect = document.querySelector("#period-select");
 const focusFiltersElement = document.querySelector("#focus-filters");
 const toggleAllSectionsButton = document.querySelector("#toggle-all-sections-button");
+const historyPanel = document.querySelector("#history-panel");
+const historyStatus = document.querySelector("#history-status");
+const uploadHistory = document.querySelector("#upload-history");
+const uploadTrends = document.querySelector("#upload-trends");
 const initialReportHeadingHint = reportHeadingHint.textContent;
 const state = createAppState();
 
@@ -41,6 +45,8 @@ reportOutput.addEventListener("click", handleReportOutputClick);
 reportOutput.addEventListener("input", handleReportOutputInput);
 reportOutput.addEventListener("pointermove", handleChartPointerMove);
 reportOutput.addEventListener("pointerleave", hideChartCrosshair);
+uploadHistory.addEventListener("click", handleUploadHistoryClick);
+loadUploadHistory();
 
 function resetApp() {
   salesFileInput.value = "";
@@ -67,6 +73,7 @@ function setGenerateButtonEnabled(isEnabled) { generateReportButton.disabled = !
 
 function applyIngestedRows(result, sourceLabel) {
   state.parsedSalesRows = result.rows; state.invalidSalesRows = result.invalidRows; state.currentReport = null;
+  state.sourceLabel = sourceLabel; state.persistedUploadId = null; state.isStoredReport = false;
   state.selectedPeriodKey = null; state.expandedSections.clear(); state.collapsedReportSections.clear();
   DEFAULT_COLLAPSED_REPORT_SECTIONS.forEach((section) => state.collapsedReportSections.add(section));
   state.tableSorts.clear(); state.tableSearches.clear(); state.focusFilters.clear(); focusFiltersElement.innerHTML = "";
@@ -125,13 +132,16 @@ async function fetchSuperstoreFromApi() {
 }
 
 function populatePeriods() {
-  const periodKeys = getSortedPeriodKeys(state.parsedSalesRows, state.selectedGranularity).reverse();
+  const periodKeys = (state.isStoredReport
+    ? state.storedPeriodKeysByGranularity?.[state.selectedGranularity] || []
+    : getSortedPeriodKeys(state.parsedSalesRows, state.selectedGranularity)
+  ).slice().reverse();
   if (!periodKeys.includes(state.selectedPeriodKey)) state.selectedPeriodKey = periodKeys[0] || null;
   periodSelect.innerHTML = periodKeys.map((key) => `<option value="${escapeHtml(key)}">${escapeHtml(formatPeriodLabel(key, state.selectedGranularity))}</option>`).join("");
   periodSelect.value = state.selectedPeriodKey || "";
 }
-function handleGranularityChange() { state.selectedGranularity = granularitySelect.value; state.expandedSections.clear(); state.focusFilters.clear(); state.selectedPeriodKey = null; populatePeriods(); renderCurrentReport(); }
-function handlePeriodChange() { state.selectedPeriodKey = periodSelect.value; state.expandedSections.clear(); state.focusFilters.clear(); renderCurrentReport(); }
+function handleGranularityChange() { state.selectedGranularity = granularitySelect.value; state.expandedSections.clear(); state.focusFilters.clear(); state.selectedPeriodKey = null; populatePeriods(); if (state.isStoredReport) loadStoredReport(); else renderCurrentReport(); }
+function handlePeriodChange() { state.selectedPeriodKey = periodSelect.value; state.expandedSections.clear(); state.focusFilters.clear(); if (state.isStoredReport) loadStoredReport(); else renderCurrentReport(); }
 function renderFocusFilters() { focusFiltersElement.innerHTML = [...state.focusFilters].map(([key, value]) => `<button type="button" data-remove-focus="${escapeHtml(key)}">${escapeHtml(value)} ×</button>`).join(""); }
 function rerenderReport() { reportOutput.innerHTML = renderReport(state.currentReport, state); }
 function handleReportOutputClick(event) {
@@ -153,5 +163,65 @@ function updateSectionToggleLabel() { if (!state.currentReport) return; const ke
 function toggleAllReportSections() { if (!state.currentReport) return; const keys = getRenderedReportSectionKeys(); if (keys.every((key) => state.collapsedReportSections.has(key))) state.collapsedReportSections.clear(); else keys.forEach((key) => state.collapsedReportSections.add(key)); updateSectionToggleLabel(); rerenderReport(); }
 function getReportFileName(report) { return report.periodKey ? `salesscope-report-${report.periodKey}.csv` : `salesscope-report-${new Date().toISOString().slice(0, 10)}.csv`; }
 function downloadCurrentReport() { if (!state.currentReport) return; const objectUrl = URL.createObjectURL(new Blob([buildReportCsv(state.currentReport)], { type: "text/csv;charset=utf-8;" })); const link = document.createElement("a"); link.href = objectUrl; link.download = getReportFileName(state.currentReport); document.body.append(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0); }
-function renderCurrentReport() { if (!state.selectedPeriodKey) return; state.currentReport = buildReport(state.parsedSalesRows, { granularity: state.selectedGranularity, periodKey: state.selectedPeriodKey }, { focusFilters: state.focusFilters, availableDimensionKeys: state.availableDimensionKeys, invalidRows: state.invalidSalesRows }); renderFocusFilters(); rerenderReport(); updateSectionToggleLabel(); downloadReportButton.hidden = false; reportHeadingHint.textContent = `Showing ${formatPeriodLabel(state.selectedPeriodKey, state.selectedGranularity)}.`; }
-function generateReport() { reportOutput.textContent = "Generating report..."; window.setTimeout(renderCurrentReport, 0); }
+function renderCurrentReport() { if (!state.selectedPeriodKey) return; state.isStoredReport = false; reportControls.hidden = false; state.currentReport = buildReport(state.parsedSalesRows, { granularity: state.selectedGranularity, periodKey: state.selectedPeriodKey }, { focusFilters: state.focusFilters, availableDimensionKeys: state.availableDimensionKeys, invalidRows: state.invalidSalesRows }); renderFocusFilters(); rerenderReport(); updateSectionToggleLabel(); downloadReportButton.hidden = false; reportHeadingHint.textContent = `Showing ${formatPeriodLabel(state.selectedPeriodKey, state.selectedGranularity)}.`; }
+function generateReport() { reportOutput.textContent = "Generating report..."; window.setTimeout(() => { renderCurrentReport(); persistCurrentUpload(); }, 0); }
+
+async function persistCurrentUpload() {
+  if (state.persistedUploadId || !state.parsedSalesRows.length || window.location.protocol === "file:") return;
+  try {
+    const response = await fetch("/api/uploads", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: state.sourceLabel || "Sales upload", source: "browser", rows: state.parsedSalesRows }) });
+    if (!response.ok) return;
+    const upload = await response.json(); state.persistedUploadId = upload.id; loadUploadHistory();
+  } catch { /* A static host has no API; the report remains fully local. */ }
+}
+
+async function loadUploadHistory() {
+  if (window.location.protocol === "file:") return;
+  try {
+    const response = await fetch("/api/uploads");
+    if (!response.ok) throw new Error("History is unavailable.");
+    const { uploads } = await response.json();
+    historyPanel.hidden = false;
+    historyStatus.textContent = uploads.length ? "Saved on this server." : "Reports you generate here will be saved on this server.";
+    uploadHistory.innerHTML = uploads.map((upload) => `<article class="history-upload"><div><div class="history-upload-name">${escapeHtml(upload.name)}</div><p class="history-upload-meta">${upload.rowCount.toLocaleString()} rows · ${escapeHtml(new Date(upload.uploadedAt).toLocaleDateString())}</p></div><button type="button" data-load-upload="${upload.id}" data-upload-name="${escapeHtml(upload.name)}" data-upload-period="${escapeHtml(upload.latestPeriod || "")}">Load latest report</button></article>`).join("");
+    loadUploadTrends();
+  } catch { historyPanel.hidden = true; }
+}
+
+async function loadUploadTrends() {
+  try {
+    const response = await fetch("/api/uploads/trends");
+    if (!response.ok) return;
+    const trends = await response.json();
+    if (!trends.periods.length) { uploadTrends.innerHTML = ""; return; }
+    const headings = trends.uploads.map((upload) => `<th scope="col">${escapeHtml(upload.name)}</th>`).join("");
+    const rows = trends.periods.map((period) => `<tr><th scope="row">${escapeHtml(formatPeriodLabel(period.key, "month"))}</th>${trends.uploads.map((upload) => `<td>${formatMoney(period.revenueByUpload[upload.id])}</td>`).join("")}</tr>`).join("");
+    uploadTrends.innerHTML = `<h3 class="trend-heading">Revenue across uploads</h3><p class="trend-note">Months shown occur in at least two saved uploads.</p><div class="table-wrap"><table class="trend-table"><thead><tr><th scope="col">Month</th>${headings}</tr></thead><tbody>${rows}</tbody></table></div>`;
+  } catch { uploadTrends.innerHTML = ""; }
+}
+
+async function handleUploadHistoryClick(event) {
+  const button = event.target.closest("[data-load-upload]");
+  if (!button || !button.dataset.uploadPeriod) return;
+  button.disabled = true;
+  try {
+    state.persistedUploadId = button.dataset.loadUpload; state.sourceLabel = button.dataset.uploadName;
+    state.selectedGranularity = "month"; state.selectedPeriodKey = button.dataset.uploadPeriod;
+    await loadStoredReport();
+    document.querySelector(".report-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) { historyStatus.textContent = error.message; }
+  finally { button.disabled = false; }
+}
+
+async function loadStoredReport() {
+  if (!state.persistedUploadId || !state.selectedPeriodKey) return;
+  const response = await fetch(`/api/uploads/${encodeURIComponent(state.persistedUploadId)}/report?granularity=${encodeURIComponent(state.selectedGranularity)}&period=${encodeURIComponent(state.selectedPeriodKey)}`);
+  if (!response.ok) throw new Error("Unable to load that saved report.");
+  const report = await response.json();
+  state.currentReport = report; state.isStoredReport = true;
+  state.storedPeriodKeysByGranularity = report.periodKeysByGranularity;
+  state.selectedGranularity = report.granularity; state.selectedPeriodKey = report.periodKey;
+  granularitySelect.value = state.selectedGranularity; populatePeriods();
+  reportControls.hidden = false; focusFiltersElement.innerHTML = ""; rerenderReport(); updateSectionToggleLabel(); downloadReportButton.hidden = false;
+  reportHeadingHint.textContent = `Showing ${formatPeriodLabel(state.selectedPeriodKey, state.selectedGranularity)} from saved upload ${state.sourceLabel}.`;
+}
