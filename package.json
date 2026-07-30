@@ -2,7 +2,9 @@
   "name": "salesscope",
   "private": true,
   "type": "module",
-  "scripts": {},
+  "scripts": {
+    "build:demo": "node tools/build-demo.mjs"
+  },
   "dependencies": {},
   "devDependencies": {}
 }

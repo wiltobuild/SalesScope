@@ -8,13 +8,17 @@ When available, SalesScope also uses `Category`, `Sub-Category`, `Region`, `Stat
 
 ## Run locally
 
-Open `index.html` in a web browser. There are three ways to get data in:
+For development, serve or open `index.html` in a modern web browser. There are three ways to get data in:
 
 - **Upload a file** - any CSV/XLS/XLSX with the columns above. Try `sample-sales-data.csv`.
 - **Load Superstore Data** - the bundled Kaggle Superstore dataset (9,994 rows, 2014–2017), read instantly from `superstore-data.js`. Works offline.
 - **Fetch Live from Kaggle API** - calls the Kaggle dataset API over HTTPS at runtime, unzips and parses the response in the browser, then loads it. Needs an internet connection.
 
 The period controls default to the latest month and switch between month and week without re-uploading. The report includes product, customer, promotion, and any available optional-dimension breakdowns. Tables start with the top 10 by revenue, can expand, and can be sorted by their columns; product and customer tables also have name search. Downloads always include all rows and sections.
+
+## Offline demo
+
+Build the self-contained `file://` demo with `node tools/build-demo.mjs` (or `npm run build:demo`). Open `demo/index.html` directly from disk, then select **Load Superstore Data** and **Generate Report**. The generated directory is intentionally ignored by Git.
 
 Click a breakdown row to focus the full report on that value; focus chips can be removed, and period changes or Reset clear them. Report sections are collapsible (expanded by default), with a Collapse all / Expand all control. Charts are likewise shown by default and can be hidden for a compact text-only brief.
 
