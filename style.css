@@ -167,6 +167,27 @@ h1 {
   background: #fdf2f2;
 }
 
+.file-protocol-warning {
+  margin-bottom: 1.5rem;
+  padding: 0.9rem 1.1rem;
+  border: 1px solid #e8d4a8;
+  border-radius: 12px;
+  color: #6d5312;
+  background: #fdf8ec;
+  font-size: 0.9rem;
+}
+
+.file-protocol-warning p {
+  margin: 0.4rem 0 0;
+}
+
+.file-protocol-warning code {
+  padding: 0.1rem 0.35rem;
+  border-radius: 5px;
+  background: #f2e8d0;
+  font-size: 0.86em;
+}
+
 #generate-report-button,
 #load-superstore-button {
   margin-top: 1rem;
@@ -443,6 +464,7 @@ h1 {
   }
 
   .hero,
+  .file-protocol-warning,
   .panel:not(.report-panel) {
     max-width: 760px;
     margin-right: auto;

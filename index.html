@@ -26,6 +26,19 @@
         </p>
       </header>
 
+      <!-- served-only:start -->
+      <div id="file-protocol-warning" class="file-protocol-warning" role="alert" hidden>
+        <strong>This page needs a web server, so nothing on it will respond.</strong>
+        <p>
+          Browsers refuse to load ES modules straight from disk, so the code
+          behind these buttons never runs. Either serve it with
+          <code>npm start</code> and open <code>localhost:3000</code>, or build
+          the standalone offline copy with <code>npm run build:demo</code> and
+          open <code>demo/index.html</code> instead of this file.
+        </p>
+      </div>
+      <!-- served-only:end -->
+
       <section class="panel" aria-labelledby="upload-heading">
         <div class="section-heading">
           <span class="step-number" aria-hidden="true">1</span>
@@ -90,6 +103,18 @@
 
     <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
     <script src="superstore-data.js"></script>
+    <!-- served-only:start -->
+    <!--
+      Deliberately a classic script, not a module: it has to keep running in the
+      exact case it exists to report, where the module below is blocked outright.
+      The demo build strips this, since the bundle it emits does run from disk.
+    -->
+    <script>
+      if (location.protocol === "file:") {
+        document.getElementById("file-protocol-warning").hidden = false;
+      }
+    </script>
+    <!-- served-only:end -->
     <script type="module" src="src/main.js"></script>
   </body>
 </html>

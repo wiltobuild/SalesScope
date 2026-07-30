@@ -91,7 +91,16 @@ function buildDemoHtml() {
     throw new Error("Root index.html no longer contains the expected module entry point.");
   }
 
-  return sourceHtml.replace(moduleTag, '<script src="salesscope.js"></script>');
+  // The served page warns anyone who opens it straight from disk that its
+  // modules cannot load. That warning is exactly wrong here, because this
+  // bundle is what makes opening it from disk work, so drop those blocks.
+  if (!sourceHtml.includes("<!-- served-only:start -->")) {
+    throw new Error("Root index.html no longer marks its served-only blocks.");
+  }
+
+  return sourceHtml
+    .replace(/[ \t]*<!-- served-only:start -->[\s\S]*?<!-- served-only:end -->\n?/g, "")
+    .replace(moduleTag, '<script src="salesscope.js"></script>');
 }
 
 fs.mkdirSync(demoDirectory, { recursive: true });
