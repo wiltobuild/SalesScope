@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:demo": "node tools/build-demo.mjs"
+    "build:demo": "node tools/build-demo.mjs",
+    "start": "node server/server.js"
   },
   "dependencies": {},
   "devDependencies": {}

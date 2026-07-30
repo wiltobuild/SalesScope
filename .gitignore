@@ -8,3 +8,6 @@ Thumbs.db
 
 # Generated offline demo
 demo/
+
+# Local backend persistence
+data/
