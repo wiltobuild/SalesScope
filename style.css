@@ -446,7 +446,10 @@ h1 {
 .chart-heading h4 { margin: 0; color: #52514e; font-size: 0.9rem; }
 .chart-toggle { padding: 0.35rem 0.55rem; border: 1px solid #c3c2b7; border-radius: 5px; color: #52514e; background: #ffffff; cursor: pointer; font: inherit; font-size: 0.78rem; }
 .chart-figure { margin: 0.6rem 0 0; overflow-x: auto; }
-.report-chart { display: block; width: 100%; min-width: 620px; height: auto; font-family: inherit; }
+/* The viewBox is 720 wide, and an SVG scales its whole contents to fit. Letting
+   it stretch past 720 magnifies the 11px labels and 2px rules with it, so the
+   chart is capped at the size its geometry was drawn for. */
+.report-chart { display: block; width: 100%; min-width: 620px; max-width: 720px; height: auto; font-family: inherit; }
 .chart-label { fill: #898781; font-size: 11px; }
 .chart-value { fill: #52514e; font-size: 11px; font-weight: 700; }
 .chart-grid { stroke: #e1e0d9; stroke-width: 1; }
