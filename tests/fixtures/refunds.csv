@@ -1,0 +1,3 @@
+Date,Order ID,Customer,Product,Quantity,Revenue,Cost,Promotion
+2026-01-01,REF-1001,Refund Customer,Returned item,1,-120.00,-120.00,Refund
+2026-02-01,ORD-1002,Regular Customer,Replacement item,1,80.00,40.00,

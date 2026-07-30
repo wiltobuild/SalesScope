@@ -28,13 +28,6 @@ const toggleAllSectionsButton = document.querySelector("#toggle-all-sections-but
 const initialReportHeadingHint = reportHeadingHint.textContent;
 const state = createAppState();
 
-// Render modules consume these shared interaction collections without touching the DOM.
-Object.assign(globalThis, {
-  state,
-  collapsedCharts: state.collapsedCharts,
-  collapsedReportSections: state.collapsedReportSections,
-});
-
 salesFileInput.addEventListener("change", handleFileInputChange);
 loadSuperstoreButton.addEventListener("click", loadSuperstoreData);
 fetchSuperstoreButton.addEventListener("click", fetchSuperstoreFromApi);
@@ -52,7 +45,6 @@ reportOutput.addEventListener("pointerleave", hideChartCrosshair);
 function resetApp() {
   salesFileInput.value = "";
   Object.assign(state, createAppState());
-  Object.assign(globalThis, { state, collapsedCharts: state.collapsedCharts, collapsedReportSections: state.collapsedReportSections });
   focusFiltersElement.innerHTML = "";
   clearSelectedFile(); clearUploadError(); setApiStatus(""); setGenerateButtonEnabled(false);
   reportOutput.innerHTML = ""; downloadReportButton.hidden = true; reportControls.hidden = true;

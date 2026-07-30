@@ -10,8 +10,8 @@ function niceChartTickSize(value) {
   return roundedFraction * exponent;
 }
 
-function renderChart(chartKey, title, description, svg, height = 260) {
-  const isCollapsed = collapsedCharts.has(chartKey);
+function renderChart(chartKey, title, description, svg, height = 260, view = {}) {
+  const isCollapsed = (view.collapsedCharts || new Set()).has(chartKey);
   const toggleLabel = isCollapsed ? "Show chart" : "Hide chart";
 
   const content = isCollapsed
@@ -26,7 +26,7 @@ function chartLabel(value, length = 16) {
   return escapeHtml(label.length > length ? `${label.slice(0, length - 1)}…` : label);
 }
 
-function renderDiscountMarginChart(items) {
+function renderDiscountMarginChart(items, view) {
   const bands = [...items].sort((first, second) => (
     Number.parseFloat(first.value) - Number.parseFloat(second.value)
   ));
@@ -82,10 +82,11 @@ function renderDiscountMarginChart(items) {
     "Margin by discount band, showing positive margin in blue and negative margin in red.",
     `<line x1="${zeroX}" y1="12" x2="${zeroX}" y2="${height - 12}" class="chart-zero"></line>${rows}`,
     height,
+    view,
   );
 }
 
-function renderRevenueOverTimeChart(report) {
+function renderRevenueOverTimeChart(report, view) {
   const points = report.revenueByPeriod;
   const minimum = Math.min(...points.map((point) => point.revenue));
   const maximum = Math.max(...points.map((point) => point.revenue), 1);
@@ -138,10 +139,12 @@ function renderRevenueOverTimeChart(report) {
     "Revenue over time",
     "Revenue over every available period, with the selected period highlighted.",
     `<g data-revenue-chart>${axes}${chartLine}${dots}${hoverMarkup}${selectedMarkup}${labels}</g>`,
+    260,
+    view,
   );
 }
 
-function renderBreakdownChart(dimension, items) {
+function renderBreakdownChart(dimension, items, view) {
   const visible = items.slice(0, TOP_ROW_COUNT);
   const metric = visible.some((item) => item.profit < 0) ? "profit" : "revenue";
   const viewBoxWidth = 720;
@@ -187,8 +190,9 @@ function renderBreakdownChart(dimension, items) {
     title,
     `Top ${Math.min(TOP_ROW_COUNT, visible.length)} ${dimension.noun} by revenue, shown as ${metric}.`,
     `${zeroLine}${bars}`,
+    260,
+    view,
   );
 }
 
 export { niceChartTickSize, renderChart, chartLabel, renderDiscountMarginChart, renderRevenueOverTimeChart, renderBreakdownChart };
-
