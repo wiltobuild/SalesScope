@@ -5,3 +5,7 @@ kaggle.json
 # OS / editor noise
 Thumbs.db
 .DS_Store
+
+.data/
+node_modules/
+*.log
