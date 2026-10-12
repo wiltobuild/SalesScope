@@ -9,3 +9,9 @@ Thumbs.db
 .data/
 node_modules/
 *.log
+.env
+.env.*
+!.env.example
+
+.vercel
+.env*

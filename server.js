@@ -935,14 +935,17 @@ const server = http.createServer(async (req, res) => {
   }
 });
 const port = Number(process.env.PORT || 4173);
-server.listen(port, process.env.HOST || "127.0.0.1", () =>
-  console.log(
-    `SalesScope running at http://${process.env.HOST || "127.0.0.1"}:${server.address().port}`,
-  ),
-);
+if (!process.env.VERCEL)
+  server.listen(port, process.env.HOST || "127.0.0.1", () =>
+    console.log(
+      `SalesScope running at http://${process.env.HOST || "127.0.0.1"}:${server.address().port}`,
+    ),
+  );
 process.on("SIGTERM", () =>
   server.close(() => {
     db.close();
     process.exit(0);
   }),
 );
+
+export default server;
